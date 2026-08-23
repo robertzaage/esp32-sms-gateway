@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned ESP-IDF
+        uses: espressif/install-esp-idf-action@v1
+        with:
+          version: "v6.0.2"
+      - name: Build release firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          idf.py set-target esp32s3
+          idf.py build
+          idf.py merge-bin -o esp32-sms-gateway-factory.bin -f raw
+          mkdir -p dist
+          cp build/esp32_sms_gateway.bin "dist/esp32-sms-gateway-${GITHUB_REF_NAME}-ota.bin"
+          cp build/esp32-sms-gateway-factory.bin "dist/esp32-sms-gateway-${GITHUB_REF_NAME}-factory.bin"
+          cp build/flash_args dist/
+          (cd dist && sha256sum * > SHA256SUMS)
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag
+          fi

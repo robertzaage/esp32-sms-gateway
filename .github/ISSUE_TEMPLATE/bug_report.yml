@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a reproducible firmware or integration problem
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include real SMS contents, phone numbers, SIM PINs, API tokens, Wi-Fi or MQTT credentials."
+  - type: input
+    id: version
+    attributes:
+      label: Firmware version
+    validations:
+      required: true
+  - type: input
+    id: modem
+    attributes:
+      label: Modem USB VID:PID and model
+      placeholder: "12d1:1506 Huawei ..."
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Remove phone numbers, message bodies and all secrets before posting.
+      render: text

@@ -1,0 +1,20 @@
+# Target hardware: Espressif ESP32-S3-USB-OTG (ESP32-S3-MINI-1-N8, 8 MB flash)
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
+# Dual OTA slots with rollback. The application marks an image valid after
+# completing its minimum boot self-test.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# Keep the watchdog enabled from the beginning of the project.
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=y
+
+# Sensible production defaults. Verbose modem traces can be enabled at runtime
+# later without making DEBUG the firmware-wide default.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

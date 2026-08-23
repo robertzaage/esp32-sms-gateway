@@ -1,0 +1,262 @@
+openapi: 3.1.0
+info:
+  title: ESP32 SMS Gateway API
+  version: 0.1.0
+  description: Versioned management and messaging API for the ESP32 SMS Gateway.
+paths:
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      summary: Minimal liveness information
+      security: []
+      responses:
+        "200":
+          description: Gateway process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /api/v1/status:
+    get:
+      operationId: getStatus
+      summary: Gateway and modem status
+      responses:
+        "200":
+          description: Current gateway state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewayStatus"
+  /api/v1/messages:
+    get:
+      operationId: listMessages
+      summary: List durable SMS records
+      parameters:
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [inbound, outbound]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      responses:
+        "200":
+          description: Message list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages]
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Message"
+    post:
+      operationId: sendMessage
+      summary: Queue an outbound SMS
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "202":
+          description: SMS durably queued.
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+  /api/v1/messages/{messageId}:
+    parameters:
+      - $ref: "#/components/parameters/MessageId"
+    get:
+      operationId: getMessage
+      summary: Get one SMS record
+      responses:
+        "200":
+          description: Message record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "404":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteMessage
+      summary: Delete a retained SMS record
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/modem/restart:
+    post:
+      operationId: restartModem
+      summary: Request controlled modem recovery/power cycle
+      responses:
+        "202":
+          description: Recovery queued.
+  /api/v1/system/reboot:
+    post:
+      operationId: rebootGateway
+      summary: Request controlled ESP restart
+      responses:
+        "202":
+          description: Restart queued.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-token
+  parameters:
+    MessageId:
+      name: messageId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 64
+  responses:
+    Problem:
+      description: RFC 9457 Problem Details response.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    GatewayStatus:
+      type: object
+      additionalProperties: false
+      required: [gateway, modem]
+      properties:
+        gateway:
+          type: object
+          required: [version, uptime_seconds]
+          properties:
+            version:
+              type: string
+            uptime_seconds:
+              type: integer
+              minimum: 0
+        modem:
+          type: object
+          required: [state, registered]
+          properties:
+            state:
+              type: string
+              enum: [boot, wait_usb, enumerate, find_at_interface, at_probe, sim_check, network_register, ready, degraded, recovery]
+            registered:
+              type: boolean
+            operator:
+              type: [string, "null"]
+            rssi_dbm:
+              type: [integer, "null"]
+            usb_reconnects:
+              type: integer
+              minimum: 0
+            recovery_count:
+              type: integer
+              minimum: 0
+    SendMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [to, text]
+      properties:
+        to:
+          $ref: "#/components/schemas/E164"
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        request_delivery_report:
+          type: boolean
+          default: true
+    Message:
+      type: object
+      additionalProperties: false
+      required: [id, direction, status, text]
+      properties:
+        id:
+          type: string
+        direction:
+          type: string
+          enum: [inbound, outbound]
+        status:
+          type: string
+          enum: [received, queued, sending, sent, delivered, failed]
+        from:
+          oneOf:
+            - $ref: "#/components/schemas/E164"
+            - type: "null"
+        to:
+          oneOf:
+            - $ref: "#/components/schemas/E164"
+            - type: "null"
+        text:
+          type: string
+        created_at:
+          type: [string, "null"]
+          format: date-time
+        network_reference:
+          type: [string, "null"]
+        failure_reason:
+          type: [string, "null"]
+    E164:
+      type: string
+      pattern: '^\\+[1-9][0-9]{1,14}$'
+      examples: ["+491701234567"]
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+security:
+  - bearerAuth: []

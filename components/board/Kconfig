@@ -1,0 +1,27 @@
+menu "ESP32-S3-USB-OTG board"
+
+choice GATEWAY_USB_HOST_POWER_SOURCE
+    prompt "USB Type-A host VBUS source"
+    default GATEWAY_USB_HOST_POWER_USB_DEV
+    help
+        The ESP32-S3-USB-OTG Type-A female HOST port is not powered from the
+        Micro-USB debug/power connector. Select the actual host VBUS source.
+
+config GATEWAY_USB_HOST_POWER_USB_DEV
+    bool "USB_DEV 5 V input (recommended bench setup)"
+    help
+        Use 5 V supplied through the board's USB_DEV Type-A male connector.
+
+config GATEWAY_USB_HOST_POWER_BATTERY
+    bool "On-board battery boost converter"
+    help
+        Use an attached Li-ion battery and enable the board boost converter.
+
+config GATEWAY_USB_HOST_POWER_OFF
+    bool "Leave host VBUS disabled"
+    help
+        Useful when a downstream powered hub supplies modem VBUS independently.
+
+endchoice
+
+endmenu
