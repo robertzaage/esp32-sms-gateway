@@ -1,13 +1,15 @@
 # Security policy
 
-This project is pre-alpha and is not yet suitable for exposure to an untrusted network.
+Please do not post real SMS content, phone numbers, SIM credentials, API tokens, Wi-Fi passwords or MQTT credentials in a public issue.
 
-When reporting a vulnerability, do not include real SMS bodies, phone numbers, SIM credentials, API tokens, Wi-Fi passwords or MQTT credentials in a public issue. Use a private security-reporting channel once the GitHub repository enables one.
+If GitHub private vulnerability reporting is enabled for this repository, use it for security reports. If it is not available, open a minimal issue asking for a private reporting channel without including vulnerability details or secrets.
 
-Security-sensitive design constraints are documented in `docs/security.md`.
+## Deployment assumptions
 
-M7 adds a bearer-authenticated OTA upload route. OTA is still served over the
-same plain-HTTP trusted-LAN management listener, so SHA-256 verifies integrity
-but not network authenticity. Do not expose OTA to an untrusted network; use a
-trusted TLS reverse proxy/VPN or deploy ESP32 signed-app/Secure Boot controls
-for a stronger threat model. See `docs/ota-releases.md` and `docs/security.md`.
+The REST management API, including OTA, currently uses plain HTTP. It is designed for a trusted management LAN, VPN, or trusted TLS reverse proxy. Do not expose it directly to the Internet.
+
+MQTT supports TLS and broker certificate verification. Use `mqtts://` when the broker is outside a trusted network.
+
+The firmware protects against accidental OTA corruption with SHA-256 and uses ESP-IDF rollback, but SHA-256 over a plain-HTTP upload does not authenticate the sender or image. Deployments with a stronger threat model should add the appropriate ESP32-S3 Secure Boot, signed-image and flash-encryption controls.
+
+More detail is in [docs/security.md](docs/security.md).

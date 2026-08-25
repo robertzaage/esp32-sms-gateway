@@ -1,83 +1,43 @@
-# Modem manager (M3)
+# Modem management
 
-The modem manager turns a working AT transport into an unattended modem service. It is the only component that owns long-lived modem policy: initialization, SIM state, registration, signal/operator status, health polling, and recovery escalation.
+The modem manager turns a working AT connection into a service that can run unattended. It owns SIM state, cellular registration, signal/operator status, periodic health checks and recovery policy.
 
-## Ownership and events
+## Initialization
 
-`modem_manager` runs one FreeRTOS task. AT-engine URCs and USB transport changes are copied into a bounded queue; they do not mutate modem state from callback context. This keeps polling, initialization and asynchronous registration changes serialized.
+After the USB layer finds a working AT port, the manager applies a conservative modem profile. It disables command echo, enables verbose modem errors, reads basic identity information, checks the SIM, enables registration notifications and starts registration/signal polling.
 
-The manager consumes the M2 `at_engine` through an injected execute callback. It never writes USB directly.
+Older Huawei firmware does not support every packet or EPS registration command. Unsupported optional commands are tolerated rather than treated as a broken modem.
 
-## Initialization profile
-
-After M1 reports an AT-ready interface, M3 performs:
-
-1. `ATE0` - disable local echo.
-2. `AT+CMEE=2` - verbose modem errors.
-3. `AT+CGMI`, `AT+CGMM`, `AT+CGMR` - manufacturer/model/revision.
-4. `AT+CGSN` - IMEI for local diagnostics only.
-5. `AT+CPIN?` - SIM state.
-6. `AT+CREG=2`, `AT+CGREG=2`, `AT+CEREG=2` with fallback to mode 1 where supported.
-7. registration queries, `AT+CSQ` and `AT+COPS?` when the SIM is ready.
-
-Unsupported packet/EPS registration commands are optional. This is important for older Huawei 2G/3G firmware.
-
-The IMEI is kept in the internal snapshot but must not be published through Home Assistant discovery, MQTT status, or normal INFO logs by default. Diagnostics also retain only structured AT result/error codes and the last recovery action; command text is not logged by M3.
+The IMEI is kept for local diagnostics but is not published through normal MQTT/Home Assistant status and should not appear in normal logs.
 
 ## SIM handling
 
-Supported states include ready, PIN required, PUK required, absent, blocked and unknown/error. A PIN can be submitted to the internal manager API only when the modem reports `SIM PIN`.
+The manager distinguishes common SIM states such as ready, PIN required, PUK required, absent and blocked.
 
-PIN rules:
+A submitted SIM PIN must be 4–8 decimal digits. It is treated as a volatile secret: the value is not logged or persisted by the modem manager, and temporary command buffers are wiped after use.
 
-- 4-8 decimal digits.
-- never logged;
-- never persisted in M3;
-- copied into a bounded queue item;
-- command buffer is zeroized after use.
+## Registration and signal
 
-Persistent SIM PIN storage, if added later, must use the same secret-storage policy as API/MQTT credentials rather than plain NVS strings.
+Circuit, packet and EPS registration are tracked independently because modem/network combinations vary. The gateway considers the modem registered when any supported domain reports home or roaming service.
 
-## Network state
+`AT+CSQ` is converted to dBm for normal values; RSSI 99 remains unknown rather than being turned into a made-up signal level. Operator information is refreshed less often than registration and signal because operator queries can be slow on real modems.
 
-M3 tracks circuit (`+CREG`), packet (`+CGREG`) and EPS (`+CEREG`) registration independently. Overall `registered=true` when any supported domain reports home or roaming service. EPS is preferred over packet and circuit state when deriving roaming status.
+URCs update state promptly, while periodic polling acts as reconciliation in case a notification was lost.
 
-`+CSQ` is normalized to dBm using the 3GPP mapping `-113 + 2*rssi` for values 0-31. RSSI 99 remains unknown rather than inventing a signal value.
+## Recovery
 
-`AT+COPS?` is deliberately polled much less frequently than registration/signal because operator selection queries can be comparatively slow on real modems.
+A few failed AT commands do not immediately cut modem power. Recovery escalates only after repeated failures:
 
-## Polling
+1. reapply the safe modem profile;
+2. request `AT+CFUN=1,1` and allow the modem to restart/re-enumerate;
+3. power-cycle Type-A VBUS if the board actually owns the modem's power path.
 
-Defaults are configurable in Kconfig:
+Healthy polling resets the escalation history.
 
-- 5 s while waiting for SIM/network.
-- 30 s while registered.
-- 5 min operator refresh.
+When a powered hub supplies the modem, the board normally cannot perform a true power cycle. The gateway reports that limitation and remains degraded rather than claiming a hard reset occurred.
 
-URCs update state immediately, so polling is a health/reconciliation mechanism rather than the only source of truth. Registration changes also schedule an immediate reconciliation so operator/signal state catches up quickly after a network transition.
+The ESP32 itself is not rebooted as ordinary modem recovery. Modem faults should stay isolated to the modem whenever possible.
 
-## Recovery ladder
+## Diagnostics
 
-AT failures do not immediately power-cycle hardware. Once the configured consecutive-failure threshold is reached, recovery escalates deterministically:
-
-1. Re-run the safe AT initialization profile.
-2. Request `AT+CFUN=1,1` and allow the modem to re-enumerate.
-3. Power-cycle Type-A VBUS through the ESP32-S3-USB-OTG board.
-
-Three consecutive healthy status poll cycles reset the escalation history.
-
-The board abstraction reports whether firmware owns a Type-A VBUS source. When configured with `GATEWAY_USB_HOST_POWER_OFF` (for example because a powered hub supplies the modem), firmware does not pretend it can hard-reset the modem; it enters `degraded` and reports `ESP_ERR_NOT_SUPPORTED` instead.
-
-An ESP32 reboot is intentionally not part of the normal M3 recovery ladder. The task watchdog and later system supervisor cover firmware failures; modem faults should be isolated to the modem whenever possible.
-
-## Host-testable logic
-
-`modem_status.c` and `modem_recovery_policy.c` are ESP-IDF-independent. CI compiles them with the host compiler and verifies:
-
-- SIM state parsing;
-- CSQ validation/dBm conversion;
-- query and URC registration forms;
-- operator parsing;
-- deterministic recovery escalation.
-
-Physical acceptance still requires the target board and modem.
+Current modem, SIM, registration, signal, operator, USB reconnect and recovery information is exposed through `/api/v1/status` and the corresponding MQTT/Home Assistant status where appropriate.

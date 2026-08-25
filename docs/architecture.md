@@ -1,113 +1,69 @@
 # Architecture
 
-## Design principles
+The gateway is built as a small appliance rather than a collection of independent AT-command endpoints. REST, MQTT and Home Assistant all feed the same modem and SMS services, which keeps retry and persistence behavior consistent.
 
-1. **Single modem owner.** Only one task may write AT commands. REST, MQTT and internal services enqueue requests.
-2. **Explicit state.** USB/modem recovery is an observable finite-state machine with reasons and counters.
-3. **Durability before acknowledgement.** An outbound SMS is persisted before the API reports it queued; an inbound SMS is persisted before it is deleted from modem storage.
-4. **At-least-once transports, idempotent application.** MQTT QoS 1 and HTTP retries are expected. Message IDs/idempotency keys prevent accidental duplicate sends.
-5. **Dependency inversion.** SMS/PDU and AT parsing remain independent of USB and networking so they are host-testable.
-6. **Bounded resources.** Queues, storage and logs have explicit limits and backpressure behavior.
-7. **Secure defaults.** No raw AT endpoint, secret logging or anonymous management API in production mode.
-
-## Layering
+## Main data path
 
 ```text
-REST / MQTT / Home Assistant / Webhooks
-                 |
-          Application services
-      SMS | Status | USSD | Diagnostics
-                 |
-             Modem core
-          composition / API
-                 |
-           Modem manager
-     SIM | network | health | recovery
-                 |
-              AT engine
-                 |
-        Modem transport interface
-          |                 |
-   CDC-like Huawei       raw USB fallback
-          \                 /
-             ESP USB Host
-                 |
-       ESP32-S3-USB-OTG board
+REST / MQTT / Home Assistant
+            |
+        SMS service
+            |
+       modem manager
+            |
+        AT engine
+            |
+       USB transport
+            |
+   Huawei USB modem
 ```
 
-## Modem lifecycle
+The board, Wi-Fi, settings, security and OTA services sit alongside that path and provide the surrounding appliance behavior.
 
-```text
-BOOT -> WAIT_USB -> ENUMERATE -> FIND_AT_INTERFACE -> AT_PROBE -> AT_READY
-  -> SIM_CHECK -> NETWORK_REGISTER -> READY
-                                  \-> DEGRADED -> RECOVERY -> WAIT_USB
-```
+## One owner of the modem
 
-Recovery is progressive: command-level retry -> AT profile reinitialization -> modem functional reset (`AT+CFUN=1,1`) -> board-controlled VBUS power cycle. An ESP restart is not normal modem recovery; a later system supervisor/watchdog handles firmware-level failures separately.
+Only the AT engine writes application commands to the selected modem interface. Callers can submit work concurrently, but commands are serialized before they reach USB.
 
-## Huawei target
+This matters most for prompt-based commands such as `AT+CMGS`: the command, `>` prompt, SMS PDU and final result are one atomic transaction. Another task cannot accidentally inject an AT command into the SMS body.
 
-Known initial target:
+Unsolicited modem messages such as registration changes and incoming-SMS notifications are routed separately from command responses. USB callbacks only move bounded data into queues; they do not run application logic.
 
-- VID/PID: `12d1:1506`
-- Composite device
-- Current Linux observation exposes two USB serial functions
-- Strong initial AT candidate: interface 1, bulk IN `0x83`, bulk OUT `0x03`, interrupt IN `0x84`
+## Durable SMS state
 
-Firmware does not permanently hardcode interface 1. The M1 transport parses the active configuration descriptor, considers only vendor-specific alternate-setting-0 interfaces with bulk IN and OUT endpoints, ranks Huawei protocol `0x01` first and `0x12` second, and proves the selected interface by receiving a complete `OK` line for an `AT` probe. The NCM data alternate setting is excluded by construction.
+Outgoing SMS is written to the dedicated NVS journal before the API reports it queued. Incoming SMS is persisted before the modem copy is deleted.
 
-## Concurrency model
+If a send is interrupted after the modem may have accepted a segment, the message becomes `uncertain`. The gateway deliberately refuses to guess whether it should resend, because guessing can create duplicate SMS. An operator can explicitly retry an uncertain message while acknowledging that risk.
 
-Current/planned FreeRTOS ownership:
+The journal is bounded. When it fills, only safe terminal records are eligible for automatic pruning. Active, ambiguous, delivery-report-pending and unpublished incoming records remain protected.
 
-- `at_worker`: exclusive application-layer AT writer; owns command transaction lifecycle and incremental parser.
-- USB callback/context: copies bytes into a bounded RX queue only; no response parsing/business logic.
-- `at_urc`: dispatches unsolicited lines outside the transaction worker so consumers cannot block parsing.
-- `modem_manager`: single writer for SIM/network/operator/signal state, periodic reconciliation and recovery policy. URCs are queued into this task before mutating state.
-- `modem_core`: composition root for USB transport, AT engine and modem manager; maps detailed manager state to the public lifecycle.
-- `sms_service`: durable incoming/outgoing state, PDU handling and delivery-report correlation.
-- REST tasks (M5) and MQTT worker (M6): validate requests and enqueue service commands; never touch the modem directly. MQTT callbacks only reconstruct bounded packets and enqueue work.
+## USB and modem recovery
 
-Prompt-based commands remain one transaction: command -> prompt -> payload -> final result. No other caller can acquire modem ownership between the prompt and payload. Multi-line SMS/delivery-report URCs retain continuation state so payload text such as `OK` cannot be misclassified as another command's final result.
+The USB transport discovers compatible Huawei serial-like interfaces from the live descriptor and verifies the AT port with an `AT`/`OK` probe. Common Huawei mass-storage personalities can be switched before normal modem probing.
 
-## Persistence
+Recovery escalates gradually:
 
-8 MB flash layout currently reserves:
+1. reapply the modem AT profile;
+2. request a modem functional reset;
+3. power-cycle board-owned host VBUS when the hardware topology allows it.
 
-- NVS: configuration/secrets metadata/counters, including versioned MQTT settings and persistent REST/MQTT idempotency records.
-- dual 3 MB OTA slots.
-- ~1.875 MB `storage` partition formatted as a dedicated NVS data partition for the durable SMS journal.
+A powered hub can improve modem power stability, but it normally prevents the ESP32 from removing downstream modem power. In that case the gateway reports that a true hard reset is unavailable instead of pretending it succeeded.
 
-SMS records use an explicitly versioned fixed-width on-flash representation. The store is bounded and fails closed when full; it never erases itself automatically on an initialization/format error.
+## Networking
+
+Wi-Fi provisioning and reconnect are handled outside the modem path. REST handlers authenticate and validate requests before calling services. MQTT callbacks reconstruct bounded messages and hand them to a worker task rather than touching the modem directly.
+
+REST and structured MQTT SMS sends share the persistent idempotency ledger. Each ingress also applies its own rate limits.
+
+## MQTT delivery
+
+Incoming SMS is already durable before MQTT publication. The gateway publishes one incoming record at a time with QoS 1 and advances a persisted replay cursor only after the MQTT client reports publication acknowledgement. Reconnects can therefore repeat an event, but they do not create or lose the underlying SMS record.
 
 ## OTA
 
-The bootloader uses ESP-IDF rollback. A newly installed image remains pending until minimum boot self-tests succeed, then calls `esp_ota_mark_app_valid_cancel_rollback()`.
+OTA is streamed directly into the inactive application partition; the complete image is not held in RAM. The upload is checked for project/version policy and SHA-256 integrity before it becomes the next boot partition.
 
+A new image remains pending after its first boot. It is marked valid only after critical services initialize and the stability timer expires. A crash or reset before confirmation lets the ESP-IDF bootloader roll back to the previous valid image.
 
-## MQTT / Home Assistant
+## Flash layout
 
-MQTT runtime state is isolated behind `mqtt_service`. Broker callbacks never call SMS/modem APIs. Fragmented inbound MQTT payloads are reconstructed into bounded buffers and posted to a worker task. REST and structured MQTT SMS sends share the same persistent idempotency ledger and outbound token bucket.
-
-Broker settings are stored as a versioned NVS record. `mqtts://` verifies the broker with either a configured private CA or Espressif's certificate bundle. Passwords and CA contents are write-only through REST and are excluded from normal logs.
-
-Home Assistant uses one retained MQTT Device Discovery document with mandatory device/origin metadata and multiple components. SMS events are non-retained. The native notify entity is intentionally QoS 0 because Home Assistant's generic notify command does not provide an application idempotency key; critical/arbitrary-recipient automations use the structured QoS-1 send topic instead.
-
-## M6.1 reliability boundaries
-
-The MQTT inbound-SMS path is backed by the same durable SMS journal as REST. A persisted broker cursor is a retention watermark: incoming records newer than the cursor are not eligible for storage-pressure pruning while MQTT is enabled. This intentionally yields at-least-once broker events and exactly-one durable SMS record.
-
-USB recovery treats a fatal CDC callback as transport loss. The selected handle is closed and candidate probing restarts; per-open generations prevent late callbacks from a retired handle from affecting the replacement session. Huawei mass-storage mode switching is performed by a separate raw USB Host client and remains isolated from the CDC/AT transport.
-
-## M7 OTA service
-
-OTA is a separate service rather than an HTTP-handler implementation detail.
-The API server owns authentication, rate limiting and HTTP streaming; the OTA
-service owns image prefix/app-descriptor policy, streaming SHA-256, inactive
-partition writes, ESP-IDF validation, boot-partition selection and delayed
-rollback confirmation. The OTA image is never buffered wholesale in RAM.
-
-A new image remains pending after boot until every critical service in
-`app_main` has initialized and the stability timer has elapsed. This makes a
-startup crash or reset an automatic rollback event rather than a permanently
-selected broken image.
+The 8 MB flash is split between normal NVS/configuration, two 3 MB OTA application slots and a dedicated storage partition for the SMS journal. See `partitions.csv` for the exact layout.

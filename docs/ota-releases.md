@@ -1,58 +1,44 @@
-# OTA, rollback, releases and flashing
+# OTA, releases and flashing
 
-M7 provides authenticated **push OTA** through the existing REST API and keeps
-initial/recovery flashing deliberately simple with `esptool`. There is no browser
-installer and no ESP Web Tools dependency.
+There are two firmware images to know about:
 
-## Image types
+- `*-factory.bin` is a merged bootloader + partition table + application image for a fresh or recovery flash with `esptool`.
+- `*-ota.bin` is the application image accepted by the gateway's OTA API.
 
-CI and tagged releases produce two primary binaries:
+Do not upload the factory image to the OTA endpoint.
 
-- `*-ota.bin` — the application image accepted by `POST /api/v1/system/firmware`.
-- `*-factory.bin` — bootloader + partition table + application merged into one
-  image for initial/recovery flashing at address `0x0`.
+GitHub release builds also include `release-manifest.json` and `SHA256SUMS` so you can verify artifact names, sizes, source revision and hashes.
 
-Never upload the merged factory image to the OTA endpoint. The endpoint accepts
-only an ESP-IDF application image for the inactive OTA slot.
+## Initial or recovery flash
 
-`release-manifest.json` contains the artifact names, sizes, SHA-256 digests,
-target and ESP-IDF version. `SHA256SUMS` covers every release file.
-
-## Initial or recovery flash with esptool
-
-Install a current esptool release, put the board into download mode if automatic
-reset does not do so, and identify the programming serial port.
+Install `esptool` and confirm that the board is visible:
 
 ```sh
 python -m pip install esptool
 python -m esptool --chip esp32s3 --port PORT flash-id
 ```
 
-Optional clean recovery:
+For a clean recovery you may erase flash first:
 
 ```sh
 python -m esptool --chip esp32s3 --port PORT erase-flash
 ```
 
-Flash the merged image:
+Flash the merged factory image at `0x0`:
 
 ```sh
 python -m esptool --chip esp32s3 --port PORT --baud 460800 \
-  write-flash 0x0 esp32-sms-gateway-v0.7.0-factory.bin
+  write-flash 0x0 esp32-sms-gateway-vX.Y.Z-factory.bin
 ```
 
-The merged image already contains the flash parameters produced by ESP-IDF. Do
-not invent offsets for the OTA image; use the merged factory image for a fresh
-device.
+You do not need ESP-IDF installed on the flashing computer when you use the merged release image.
 
-## OTA upload
+## OTA update
 
-The endpoint is authenticated with the same bearer token as the rest of the
-management API. It accepts `application/octet-stream` and requires the SHA-256
-of the exact OTA binary in `X-Firmware-SHA256`.
+The OTA endpoint uses the same bearer token as the rest of the REST API. It expects the raw application image and the SHA-256 of that exact file.
 
 ```sh
-OTA=esp32-sms-gateway-v0.7.0-ota.bin
+OTA=esp32-sms-gateway-vX.Y.Z-ota.bin
 TOKEN='...'
 GATEWAY='http://sms-gateway.local'
 SHA256="$(sha256sum "$OTA" | awk '{print $1}')"
@@ -66,79 +52,57 @@ curl --fail-with-body \
   --data-binary "@$OTA"
 ```
 
-A successful response is `202 Accepted`. The gateway selects the inactive OTA
-slot and reboots shortly after the response is sent.
+A successful upload returns `202 Accepted`, selects the inactive OTA slot and reboots shortly afterward.
 
-The API rejects:
+The gateway rejects corrupted/truncated images, a SHA-256 mismatch, the wrong project, invalid versions, images that do not fit the OTA slot and attempts to install a lower `secure_version`.
 
-- an invalid/truncated ESP-IDF application image;
-- a SHA-256 mismatch;
-- an image whose project name is not `esp32_sms_gateway`;
-- a non-SemVer application version;
-- reinstalling the identical version unless explicitly allowed;
-- a downgrade unless explicitly allowed;
-- any image whose `secure_version` is lower than the running image;
-- an image that does not fit the inactive OTA partition;
-- another OTA while the current image is still pending rollback verification.
-
-An intentional reinstall requires:
+Reinstalling the same application version requires:
 
 ```text
 X-Firmware-Allow-Reinstall: true
 ```
 
-An intentional version downgrade requires:
+Installing an older application version requires:
 
 ```text
 X-Firmware-Allow-Downgrade: true
 ```
 
-These are separate safeguards. Neither header permits lowering ESP-IDF's
-`secure_version` field.
+These are deliberate operator overrides. Neither one bypasses ESP-IDF's `secure_version` anti-rollback check.
 
-## Rollback confirmation
+## Rollback behavior
 
-`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is enabled. On the first boot of a new
-OTA image, ESP-IDF marks it `PENDING_VERIFY`.
+ESP-IDF application rollback is enabled. A newly installed image boots in a pending-verification state.
 
-The firmware does **not** confirm the image immediately. It first requires all
-critical application services to initialize successfully, then waits
-`CONFIG_GATEWAY_OTA_CONFIRM_DELAY_SECONDS` (30 seconds by default). Only after
-that stability window does it call `esp_ota_mark_app_valid_cancel_rollback()`.
+The gateway does not mark it valid immediately. Critical services must initialize successfully and the firmware must remain alive for the configured stability window (30 seconds by default). Only then is the image confirmed.
 
-If the new image crashes, aborts, loses power or deliberately resets before it
-is confirmed, the bootloader rolls back on the next boot to the previously
-valid slot.
+If the new image crashes or resets before confirmation, the bootloader can return to the previous valid OTA slot on the next boot.
 
-Inspect state with:
+Check the current state with:
 
 ```sh
-curl -H "Authorization: Bearer $TOKEN" \
+curl \
+  -H "Authorization: Bearer $TOKEN" \
   "$GATEWAY/api/v1/system/firmware"
 ```
 
 OTA state is also included in `/api/v1/status`.
 
-## Integrity versus authenticity
+## Security boundary
 
-The required SHA-256 protects against accidental corruption and catches use of
-the wrong release file. It is **not a substitute for transport or image
-authenticity**: on plain HTTP an active network attacker could replace both the
-image and checksum header.
+The required SHA-256 catches corruption and accidental use of the wrong file. It does **not** authenticate an upload made over plain HTTP; an active network attacker could replace both the binary and checksum header.
 
-Until native HTTPS or signed-app enforcement is enabled, perform OTA only on a
-trusted management LAN or through a trusted TLS reverse proxy/VPN. Production
-deployments with a stronger physical/network threat model should enable the
-ESP32-S3 Secure Boot / signed-app / flash-encryption controls as appropriate.
+Perform OTA only on a trusted management network or through a trusted VPN/TLS reverse proxy. Deployments that need cryptographic firmware authenticity or protection against physical flash access should use the ESP32-S3 Secure Boot, signed-image and flash-encryption features appropriate to their threat model.
 
-## Tagged releases
+## Creating a release
 
-Pushing a SemVer tag such as `v0.7.0` runs `.github/workflows/release.yml`.
-Release CI sets the embedded application version from the tag, builds with the
-pinned ESP-IDF version, parses the resulting `esp_app_desc_t` back out of the
-binary to prove that project/version metadata matches, creates the OTA and
-factory binaries, writes the manifest/checksums, and uploads them to the GitHub
-Release.
+Tags matching `v*.*.*` run `.github/workflows/release.yml`. The workflow reruns host tests, builds with ESP-IDF 6.0.2, embeds the version from the tag, verifies the version in the resulting application image, generates factory/OTA artifacts and publishes them to the GitHub Release.
 
-The release workflow can also be manually dispatched for an **existing tag**;
-it checks out that tag before building it.
+For hardware validation builds, use a SemVer prerelease tag such as:
+
+```sh
+git tag -a v0.7.0-alpha.1 -m "ESP32 SMS Gateway v0.7.0-alpha.1"
+git push origin v0.7.0-alpha.1
+```
+
+Keep prerelease tags for builds that have passed CI but still need physical board/modem validation.

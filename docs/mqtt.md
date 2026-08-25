@@ -1,36 +1,36 @@
-# MQTT contract v1
+# MQTT
 
-MQTT is disabled by default. Configure it through `PATCH /api/v1/config/mqtt` and enable it only after a broker URI and topics validate.
+MQTT is optional and disabled until configured through `PATCH /api/v1/config/mqtt`.
 
-Supported broker schemes are `mqtt://` and `mqtts://`. Credentials are configured separately from the URI. `mqtts://` verifies the broker with either a configured private CA PEM or Espressif's certificate bundle.
+The gateway supports `mqtt://` and `mqtts://`. Broker credentials are configured separately from the URI. With `mqtts://`, the broker certificate is verified with either a configured private CA or Espressif's certificate bundle.
 
-The default application root is:
+The default topic root is:
 
 ```text
 sms-gateway/<device_id>/
 ```
 
-`device_id` is stable per gateway and contains no SIM, phone-number or modem identity.
+The device ID is stable for the gateway and does not contain the SIM number, phone number or IMEI.
 
 ## Topics
 
-| Topic suffix | Direction | QoS | Retain | Purpose |
+| Suffix | Direction | QoS | Retained | Purpose |
 |---|---|---:|---:|---|
-| `availability` | gateway -> broker | 1 | yes | `online`; LWT publishes `offline` |
-| `status` | gateway -> broker | 1 | yes | non-sensitive modem/gateway status |
-| `sms/send` | client -> gateway | 1 | no | durable structured SMS command |
-| `command/result` | gateway -> broker | 1 | no | structured command acknowledgement |
-| `sms/received` | gateway -> broker | 1 | no | incoming text-SMS event |
-| `sms/status` | gateway -> broker | 1 | no | outbound/inbound durable status changes |
-| `modem/restart` | client -> gateway | 1 | no | request controlled modem restart |
-| `system/reboot` | client -> gateway | 1 | no | request gateway restart |
-| `ha/notify` | Home Assistant -> gateway | 0 | no | native notify convenience path for configured default recipient |
+| `availability` | gateway → broker | 1 | yes | `online`; LWT publishes `offline` |
+| `status` | gateway → broker | 1 | yes | non-sensitive gateway/modem status |
+| `sms/send` | client → gateway | 1 | no | structured SMS command |
+| `command/result` | gateway → broker | 1 | no | command result |
+| `sms/received` | gateway → broker | 1 | no | incoming SMS event |
+| `sms/status` | gateway → broker | 1 | no | durable message status change |
+| `modem/restart` | client → gateway | 1 | no | restart/recover modem |
+| `system/reboot` | client → gateway | 1 | no | reboot gateway |
+| `ha/notify` | Home Assistant → gateway | 0 | no | convenience send to the configured default recipient |
 
-SMS bodies/events are **never retained**. Only availability/status/discovery are retained.
+SMS bodies and SMS events are never retained by the gateway.
 
-## Structured SMS send
+## Send an SMS
 
-Publish to `<base>/sms/send` with QoS 1:
+Publish JSON to `<base>/sms/send` with QoS 1:
 
 ```json
 {
@@ -41,19 +41,19 @@ Publish to `<base>/sms/send` with QoS 1:
 }
 ```
 
-`request_id` is mandatory, 8-128 printable characters, and uses the same persistent idempotency ledger as REST. QoS-1 redelivery, reconnect, or ESP restart therefore cannot silently queue a second SMS with the same request. Reusing the ID with different content is rejected.
+`request_id` is required and is stored in the same persistent idempotency ledger used by REST. Re-delivery after reconnect or reboot therefore does not silently queue another SMS with the same request. Reusing the ID with different content is rejected.
 
-Acknowledgements are published on `<base>/command/result`, for example:
+Results arrive on `<base>/command/result`:
 
 ```json
 {"request_id":"automation-unique-id-0001","ok":true,"code":"accepted","message_id":42}
 ```
 
-Possible failure codes include `invalid_request`, `rate_limited`, `idempotency_conflict`, `idempotency_expired`, and `queue_failed`.
+Invalid input, rate limiting, idempotency conflicts, messages that exceed the 16-segment limit and queue failures are returned as structured failure results.
 
-## Incoming SMS
+## Receive SMS
 
-`<base>/sms/received` carries non-retained JSON:
+`<base>/sms/received` contains a non-retained event such as:
 
 ```json
 {
@@ -66,28 +66,34 @@ Possible failure codes include `invalid_request`, `rate_limited`, `idempotency_c
 }
 ```
 
-SMS originators may be numeric or alphanumeric. Treat message text as private data and configure broker retention/logging accordingly.
+An originator can be a phone number or an alphanumeric sender ID.
+
+Incoming MQTT delivery is **at least once**. The SMS is committed to flash before publication, and the gateway advances a persistent replay cursor only after the MQTT publish is acknowledged. A lost acknowledgement can repeat an event after reconnect, so consumers should use the durable message `id` when deduplication matters.
+
+While MQTT is enabled, incoming SMS records that have not crossed that replay cursor are protected from storage-pressure pruning.
+
+## Command safety
+
+The gateway rejects retained messages on all command topics. This prevents an old retained send/restart command from executing when the gateway reconnects.
+
+`modem/restart` and `system/reboot` additionally require the exact payload:
+
+```text
+PRESS
+```
+
+Structured `sms/send` commands use `request_id` for application-level duplicate protection. Control commands do not have the same idempotency key, so do not intentionally publish them repeatedly with QoS 1.
 
 ## Home Assistant
 
-When enabled, firmware publishes one retained MQTT **device discovery** document to:
+When Home Assistant discovery is enabled, the gateway publishes a retained device discovery document under:
 
 ```text
 <discovery_prefix>/device/<device_id>/config
 ```
 
-The document includes required `device` and `origin` metadata and multiple components: modem/SIM/operator/signal/queue sensors, registration binary sensor, incoming-SMS event entity, restart buttons, and optionally a native MQTT notify entity.
+It creates gateway/modem diagnostics, registration state, an incoming-SMS event, restart buttons and—when a default recipient is configured—an MQTT notify entity.
 
-The native notify entity uses `<base>/ha/notify` and exists only when `default_recipient` is configured. It is a convenience path at QoS 0 because Home Assistant's generic notify payload has no application-level idempotency key. For alarm/critical workflows use the structured `sms/send` topic and a unique `request_id` instead.
+The notify entity is a convenience path and uses QoS 0 because Home Assistant's generic notify payload does not provide an application idempotency key. For alarms or arbitrary recipients, use the structured `sms/send` topic with a unique `request_id`.
 
-The gateway subscribes to `homeassistant/status`; an `online` event causes discovery/status to be republished.
-
-Disabling Home Assistant discovery or changing broker/discovery configuration clears the old retained device-discovery payload before disconnecting when possible.
-
-## Reliability and command safety
-
-Application command topics are edge-triggered. The gateway rejects any command received with the MQTT retained flag set, so an old retained `sms/send`, `ha/notify`, `modem/restart`, or `system/reboot` message cannot execute when the gateway reconnects. Restart topics additionally require the exact payload `PRESS`.
-
-Incoming text-SMS events use durable at-least-once delivery. The SMS record is already committed to the SMS journal before publication. Firmware publishes one inbound record at a time with QoS 1 and advances a persisted replay cursor only after `MQTT_EVENT_PUBLISHED` confirms the client-side acknowledgement flow. After broker/Wi-Fi/gateway interruption, records newer than that cursor are replayed in ID order. A lost PUBACK can therefore duplicate an MQTT/HA event, but cannot duplicate or lose the underlying SMS.
-
-While MQTT is enabled, inbound SMS records newer than the replay cursor are protected from automatic storage-pressure pruning. Disabling MQTT removes that replay protection because no broker delivery is expected while the integration is disabled.
+See [Home Assistant](../homeassistant/README.md) for examples.

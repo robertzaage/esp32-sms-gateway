@@ -1,86 +1,98 @@
 # Networking and REST API
 
-M5 adds Wi-Fi onboarding and the first implemented HTTP management API.
+The gateway joins Wi-Fi as a station and exposes a small REST management API on the local network.
+
+The complete machine-readable contract is [api/openapi.yaml](../api/openapi.yaml). This page covers the parts an operator normally needs.
 
 ## Wi-Fi provisioning
 
-On an unprovisioned device the gateway starts Espressif `network_provisioning`
-1.2.4 using the SoftAP scheme and protocomm Security 1 (X25519 + AES-CTR with
-proof of possession). ESP-IDF 6 disables Security 1 unless explicitly enabled,
-so `sdkconfig.defaults` turns it on deliberately.
+A fresh device starts Espressif SoftAP provisioning. The serial console prints the provisioning service name and a temporary proof-of-possession value. Wi-Fi credentials are handled by ESP-IDF and are not printed after provisioning succeeds.
 
-The serial console prints a transient line containing the provisioning service
-name and one-time PoP. Neither Wi-Fi credentials nor PoP are logged after
-provisioning succeeds. Provisioned credentials remain in the normal Wi-Fi NVS
-storage managed by ESP-IDF.
+Once connected, the gateway uses capped reconnect backoff and starts SNTP after it has an IPv4 address.
 
-When provisioned, the gateway runs station mode with capped exponential
-reconnect backoff. SNTP starts after an IPv4 address is obtained. A stable
-hostname/device ID is derived from the station MAC suffix without publishing
-the complete MAC address in normal application state.
+## API token
 
-## API authentication
+On first boot the gateway creates a random 256-bit bearer token and prints it once:
 
-On first boot the gateway creates 32 random bytes and renders them as a
-64-character hexadecimal bearer token. Only SHA-256(token) is stored in NVS;
-the plaintext token is printed to the serial console exactly once as
-`INITIAL_API_TOKEN=...`. Losing that token currently requires erasing the normal
-NVS partition and reprovisioning.
+```text
+INITIAL_API_TOKEN=...
+```
 
-All `/api/v1/*` routes except `/api/v1/health` require:
+Only a SHA-256 digest of that token is stored in NVS. Save the plaintext token somewhere appropriate for your deployment.
+
+`/api/v1/health` is unauthenticated. Other `/api/v1/*` routes require:
 
 ```text
 Authorization: Bearer <token>
 ```
 
-Validation hashes the presented token and uses a constant-time digest compare.
-Request bodies are bounded before allocation and parsed as JSON only after
-authentication and global rate-limit checks.
+The management listener is plain HTTP. Keep it on a trusted LAN or access it through a trusted VPN/TLS reverse proxy.
 
-## SMS safety
+## Check status
 
-`POST /api/v1/messages` returns `202 Accepted` after the SMS is durable in the
-M4 NVS journal. It does not wait for the cellular network.
+```sh
+curl http://sms-gateway.local/api/v1/health
 
-Clients should send an `Idempotency-Key` (8..128 safe ASCII characters). The
-firmware persists SHA-256(key), SHA-256(canonical SMS request) and the durable
-message ID. A repeated identical request returns the existing message. Reusing
-the same key for different content is `409 Conflict`. If the SMS record has
-already been removed, replay also returns `409` instead of sending again.
+curl \
+  -H "Authorization: Bearer $TOKEN" \
+  http://sms-gateway.local/api/v1/status
+```
 
-Outbound SMS has a separate token bucket from normal API traffic. An
-`uncertain` message can be retried only through `/messages/{id}/retry` with
-`acknowledge_duplicate_risk: true`.
+`/status` includes network, modem/SIM, signal, SMS journal pressure, USB recovery/over-current, idempotency, MQTT replay and OTA state.
 
-## Transport security
+## Send SMS
 
-M5 intentionally does not ship a shared/default HTTPS private key. The embedded
-HTTP server is therefore for a trusted LAN or a reverse TLS proxy. A later
-milestone can provision unique per-device HTTPS credentials. Bearer tokens
-must not be exposed across an untrusted network.
+```sh
+curl --fail-with-body \
+  -X POST http://sms-gateway.local/api/v1/messages \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: invoice-alert-00042' \
+  -d '{"to":"+491701234567","text":"Invoice 42 is ready","delivery_report":true}'
+```
 
-The OpenAPI 3.1 contract in `api/openapi.yaml` is authoritative.
+A successful request returns `202 Accepted` after the outbound record is committed to flash. It does not wait for cellular delivery.
+
+Use a unique `Idempotency-Key` for retried client requests. Repeating the same key and same SMS returns the existing durable message rather than queuing another one. Reusing a key for different content is rejected.
+
+Messages are preflighted before they enter the queue. Text that cannot be represented within the firmware's 16-segment GSM-7/UCS-2 limit returns HTTP `422`.
+
+## Uncertain sends
+
+If power or USB is lost at a point where the modem may already have accepted a segment, the message becomes `uncertain`. It is not automatically retried.
+
+An operator can retry through `/api/v1/messages/{id}/retry` only by sending:
+
+```json
+{"acknowledge_duplicate_risk": true}
+```
+
+That explicit acknowledgement exists because the retry can produce a duplicate SMS.
+
+## SIM and recovery
+
+The API can submit a volatile SIM PIN, request modem recovery and reboot the gateway. There is intentionally no general-purpose raw AT endpoint.
 
 ## MQTT configuration
 
-M6 adds authenticated `GET`/`PATCH /api/v1/config/mqtt`. Reads are redacted: broker passwords and custom CA PEM contents are never returned. `password_set` and `ca_configured` indicate whether those write-only values are present. See [mqtt.md](mqtt.md) for the broker/topic and Home Assistant contract.
+`GET /api/v1/config/mqtt` returns redacted settings and runtime state. `PATCH /api/v1/config/mqtt` updates broker, TLS and Home Assistant settings. Passwords and private CA contents are write-only; reads expose only whether those values are configured.
 
-## M6.1 API hardening
+See [MQTT](mqtt.md) for the topic contract.
 
-`POST /api/v1/messages` performs a codec preflight before creating any durable SMS record. Requests that cannot fit within the firmware's 16-segment GSM-7/UCS-2 limit return HTTP `422` and are never queued.
+## Idempotency recovery
 
-`GET /api/v1/status` exposes SMS store usage/pruning pressure, idempotency slot pressure, Huawei mode-switch counters, USB over-current/cutoff counters, and MQTT inbound replay cursor/in-flight state.
+The gateway uses two-phase persistent reservations to make REST/MQTT retry behavior conservative across resets. A reservation whose final message ID could not be recorded is not silently expired, because doing so might permit a duplicate SMS.
 
-Pending two-phase idempotency reservations are intentionally not expired automatically. An authenticated operator can clear them through `POST /api/v1/system/idempotency/clear-pending` only with `{"acknowledge_duplicate_risk":true}`. This is an emergency recovery operation because a reservation may represent an SMS whose queue/finalization outcome was interrupted.
+If an operator decides to clear stranded reservations, use `POST /api/v1/system/idempotency/clear-pending` with:
 
-## M7 firmware endpoint
+```json
+{"acknowledge_duplicate_risk": true}
+```
 
-`GET /api/v1/system/firmware` reports the running/selected boot versions and
-partitions, pending-verification state, confirmation scheduling and OTA counters.
+This is an emergency recovery action, not routine maintenance.
 
-`POST /api/v1/system/firmware` streams an ESP-IDF **application OTA image** using
-`application/octet-stream`; it is not a multipart/form-data upload. The
-`X-Firmware-SHA256` header is mandatory. Successful staging returns `202` and
-the gateway reboots into the inactive slot. Reinstall/downgrade require their
-explicit opt-in headers. See [ota-releases.md](ota-releases.md) for curl and
-`esptool` examples and the rollback model.
+## Firmware updates
+
+`GET /api/v1/system/firmware` reports the running and selected boot image plus rollback/OTA state.
+
+`POST /api/v1/system/firmware` accepts the raw `*-ota.bin` application image as `application/octet-stream` and requires an `X-Firmware-SHA256` header. See [OTA and releases](ota-releases.md) for the complete example and version policy.
