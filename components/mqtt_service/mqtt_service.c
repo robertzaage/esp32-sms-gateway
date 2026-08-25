@@ -10,7 +10,7 @@
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
-#include "esp_mqtt_client.h"
+#include "mqtt_client.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
