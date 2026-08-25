@@ -8,6 +8,7 @@
 #include "api_idempotency.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
+#include "esp_ota_ops.h"
 #include "modem_recovery_policy.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
