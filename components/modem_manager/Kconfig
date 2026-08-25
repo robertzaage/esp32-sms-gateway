@@ -1,0 +1,33 @@
+menu "Modem manager"
+
+config GATEWAY_MODEM_POLL_READY_MS
+    int "Status poll interval while registered (ms)"
+    range 5000 300000
+    default 30000
+
+config GATEWAY_MODEM_POLL_WAIT_MS
+    int "Status poll interval while waiting for SIM/network (ms)"
+    range 1000 60000
+    default 5000
+
+config GATEWAY_MODEM_FAILURES_BEFORE_RECOVERY
+    int "Consecutive AT failures before recovery"
+    range 2 10
+    default 3
+
+config GATEWAY_MODEM_HARD_RESET_AFTER_RECOVERIES
+    int "Recovery rounds before VBUS hard reset"
+    range 1 10
+    default 2
+
+config GATEWAY_MODEM_HARD_RESET_OFF_MS
+    int "USB VBUS power-off duration during hard reset (ms)"
+    range 500 10000
+    default 1500
+
+config GATEWAY_MODEM_RECOVERY_BACKOFF_MS
+    int "Recovery backoff after modem reset (ms)"
+    range 1000 60000
+    default 5000
+
+endmenu

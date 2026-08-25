@@ -1,5 +1,5 @@
 # Example Home Assistant script for arbitrary SMS recipients without HACS.
-# Replace gateway01 with the gateway's configured device_id.
+# Replace sms-gateway/smsgw-xxxxxx with the gateway's configured base_topic.
 script:
   send_sms_via_esp32_gateway:
     alias: Send SMS via ESP32 Gateway
@@ -19,8 +19,13 @@ script:
     sequence:
       - action: mqtt.publish
         data:
-          topic: sms-gateway/gateway01/command/sms/send
+          topic: sms-gateway/smsgw-xxxxxx/sms/send
           qos: 1
           retain: false
           payload: >-
-            {{ {"to": number, "text": message, "delivery_report": true} | to_json }}
+            {{ {
+              "request_id": "ha-" ~ ((now().timestamp() * 1000000) | int),
+              "to": number,
+              "text": message,
+              "delivery_report": true
+            } | to_json }}

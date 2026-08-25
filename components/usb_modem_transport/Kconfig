@@ -1,0 +1,47 @@
+menu "USB modem transport"
+
+config GATEWAY_MODEM_USB_VID
+    hex "Target modem USB vendor ID"
+    default 0x12D1
+    help
+        Huawei Technologies vendor ID for the initial supported modem family.
+
+config GATEWAY_MODEM_USB_PID
+    hex "Target modem USB product ID"
+    default 0x1506
+    help
+        Post-mode-switch Huawei modem/network-card product ID.
+
+config GATEWAY_MODEM_USB_SWITCH_PID_EXTRA
+    hex "Additional Huawei pre-switch product ID (0 disables)"
+    default 0x0000
+    help
+        In addition to the built-in Huawei 0x1446 and 0x14FE storage-mode
+        personalities, optionally recognize one site-specific cold-boot PID.
+
+config GATEWAY_MODEM_USB_PROBE_RETRIES
+    int "AT probe retries per candidate interface"
+    range 1 10
+    default 3
+
+config GATEWAY_MODEM_USB_PROBE_TIMEOUT_MS
+    int "AT probe response timeout (ms)"
+    range 250 10000
+    default 2000
+
+config GATEWAY_MODEM_USB_OPEN_TIMEOUT_MS
+    int "CDC interface open timeout (ms)"
+    range 0 10000
+    default 1000
+
+config GATEWAY_MODEM_USB_RX_BUFFER_SIZE
+    int "CDC bulk IN buffer size"
+    range 64 4096
+    default 512
+
+config GATEWAY_MODEM_USB_TX_BUFFER_SIZE
+    int "CDC bulk OUT buffer size"
+    range 64 4096
+    default 512
+
+endmenu

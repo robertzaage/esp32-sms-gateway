@@ -15,12 +15,16 @@ def main() -> None:
     text = (ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8")
     required_fragments = [
         "openapi: 3.1.0",
-        "version: 0.1.0",
+        "version: 0.7.0",
         "/api/v1/health:",
         "/api/v1/status:",
         "/api/v1/messages:",
         "Idempotency-Key",
         '"202":',
+        '"422":',
+        "/api/v1/system/idempotency/clear-pending:",
+        "/api/v1/system/firmware:",
+        "X-Firmware-SHA256",
         "additionalProperties: false",
         "application/problem+json",
     ]

@@ -5,27 +5,37 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   contracts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Validate contracts
         run: python scripts/validate_contracts.py
       - name: Run host tests
         run: python -m unittest discover -s tests -v
+      - name: Check whitespace
+        run: git diff --check
 
   firmware:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
       - name: Install pinned ESP-IDF
         uses: espressif/install-esp-idf-action@v1
         with:
@@ -34,21 +44,28 @@ jobs:
         run: idf.py set-target esp32s3
       - name: Build firmware
         run: idf.py build
-      - name: Create merged factory image
-        run: idf.py merge-bin -o esp32-sms-gateway-factory.bin -f raw
-      - name: Assemble artifacts
+      - name: Verify embedded application metadata
+        run: python scripts/inspect_app_image.py build/esp32_sms_gateway.bin --expect-project esp32_sms_gateway --expect-version 0.7.0-dev
+      - name: Assemble flashable artifacts
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
           cp build/esp32_sms_gateway.bin dist/esp32-sms-gateway-ota.bin
-          cp build/esp32-sms-gateway-factory.bin dist/
+          idf.py merge-bin -o "$PWD/dist/esp32-sms-gateway-factory.bin" -f raw
           cp build/bootloader/bootloader.bin dist/
           cp build/partition_table/partition-table.bin dist/
           cp build/flash_args dist/
-          (cd dist && sha256sum * > SHA256SUMS)
-      - uses: actions/upload-artifact@v4
+          if [[ -f build/flasher_args.json ]]; then cp build/flasher_args.json dist/; fi
+          python scripts/release_manifest.py \
+            --dist dist --version 0.7.0-dev \
+            --ota esp32-sms-gateway-ota.bin \
+            --factory esp32-sms-gateway-factory.bin \
+            --git-sha "$GITHUB_SHA"
+          (cd dist && sha256sum $(find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort) > SHA256SUMS)
+      - uses: actions/upload-artifact@v7
         with:
           name: esp32-sms-gateway-firmware
           path: dist/
           if-no-files-found: error
+          compression-level: 0

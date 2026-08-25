@@ -20,7 +20,9 @@ config GATEWAY_USB_HOST_POWER_BATTERY
 config GATEWAY_USB_HOST_POWER_OFF
     bool "Leave host VBUS disabled"
     help
-        Useful when a downstream powered hub supplies modem VBUS independently.
+        Use only when the downstream topology has been verified to work without
+        upstream VBUS. Some self-powered hubs still require host VBUS for attach
+        or session detection, so USB_DEV remains the safer default with a hub.
 
 endchoice
 

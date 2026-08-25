@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: ESP32 SMS Gateway API
-  version: 0.1.0
+  version: 0.7.0
   description: Versioned management and messaging API for the ESP32 SMS Gateway.
 paths:
   /api/v1/health:
@@ -37,13 +37,19 @@ paths:
           schema:
             type: string
             enum: [inbound, outbound]
+        - name: after_id
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
         - name: limit
           in: query
           schema:
             type: integer
             minimum: 1
-            maximum: 100
-            default: 25
+            maximum: 25
+            default: 10
       responses:
         "200":
           description: Message list.
@@ -89,6 +95,8 @@ paths:
           $ref: "#/components/responses/Problem"
         "409":
           $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
         "429":
           $ref: "#/components/responses/Problem"
   /api/v1/messages/{messageId}:
@@ -114,6 +122,93 @@ paths:
           description: Deleted.
         "404":
           $ref: "#/components/responses/Problem"
+  /api/v1/messages/{messageId}/retry:
+    parameters:
+      - $ref: "#/components/parameters/MessageId"
+    post:
+      operationId: retryUncertainMessage
+      summary: Explicitly retry an outbound message with uncertain delivery
+      description: >-
+        This operation can duplicate the last ambiguous segment. It is accepted only
+        when the record is in uncertain state and the caller explicitly acknowledges
+        that risk.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [acknowledge_duplicate_risk]
+              properties:
+                acknowledge_duplicate_risk:
+                  type: boolean
+                  const: true
+      responses:
+        "202":
+          description: Retry durably queued.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+
+
+  /api/v1/config/mqtt:
+    get:
+      operationId: getMqttConfig
+      summary: Get redacted MQTT configuration and runtime state
+      responses:
+        "200":
+          description: MQTT configuration. Secrets are never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MqttConfig"
+    patch:
+      operationId: updateMqttConfig
+      summary: Update MQTT and Home Assistant settings
+      description: Password and private CA values are write-only. JSON null clears a stored secret/optional value.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MqttConfigPatch"
+      responses:
+        "200":
+          description: Updated redacted MQTT configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MqttConfig"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+
+  /api/v1/modem/sim-pin:
+    post:
+      operationId: submitSimPin
+      summary: Submit a volatile SIM PIN
+      description: The PIN is queued to the modem manager and is never persisted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [pin]
+              properties:
+                pin:
+                  type: string
+                  pattern: '^[0-9]{4,8}$'
+      responses:
+        "202":
+          description: PIN accepted for processing.
+        "409":
+          $ref: "#/components/responses/Problem"
+
   /api/v1/modem/restart:
     post:
       operationId: restartModem
@@ -128,6 +223,112 @@ paths:
       responses:
         "202":
           description: Restart queued.
+  /api/v1/system/idempotency/clear-pending:
+    post:
+      operationId: clearPendingIdempotencyReservations
+      summary: Explicitly clear stranded idempotency reservations
+      description: >-
+        Emergency/operator recovery for durable reservations whose final message ID
+        could not be recorded. Clearing them can permit an SMS to be duplicated, so
+        the caller must explicitly acknowledge that risk.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [acknowledge_duplicate_risk]
+              properties:
+                acknowledge_duplicate_risk:
+                  type: boolean
+                  const: true
+      responses:
+        "200":
+          description: Pending reservations cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cleared, warning]
+                properties:
+                  cleared: {type: integer, minimum: 0}
+                  warning: {type: string}
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /api/v1/system/firmware:
+    get:
+      operationId: getFirmwareStatus
+      summary: Get running/boot firmware and OTA state
+      responses:
+        "200":
+          description: Firmware and OTA state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FirmwareStatus"
+        "503":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: uploadFirmware
+      summary: Stage an OTA application image and reboot into it
+      description: >-
+        Upload the CI/release application image (not the merged factory image) as
+        application/octet-stream. The image is SHA-256 checked, validated by ESP-IDF,
+        checked for project/version policy, written to the inactive OTA slot, selected
+        for the next boot, and then the gateway reboots. The new image must survive the
+        rollback confirmation window before becoming valid.
+      parameters:
+        - name: X-Firmware-SHA256
+          in: header
+          required: true
+          description: Lower- or upper-case SHA-256 hex digest of the exact OTA binary.
+          schema:
+            type: string
+            pattern: '^[0-9A-Fa-f]{64}$'
+        - name: X-Firmware-Allow-Reinstall
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: ["true"]
+        - name: X-Firmware-Allow-Downgrade
+          in: header
+          required: false
+          description: Explicitly permits a lower SemVer application version. It never permits lowering secure_version.
+          schema:
+            type: string
+            enum: ["true"]
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "202":
+          description: Image staged successfully; gateway is rebooting into the new OTA slot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FirmwareUploadResult"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "415":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     bearerAuth:
@@ -140,9 +341,8 @@ components:
       in: path
       required: true
       schema:
-        type: string
-        minLength: 8
-        maxLength: 64
+        type: integer
+        minimum: 1
   responses:
     Problem:
       description: RFC 9457 Problem Details response.
@@ -162,7 +362,7 @@ components:
     GatewayStatus:
       type: object
       additionalProperties: false
-      required: [gateway, modem]
+      required: [gateway, modem, sms, ota, mqtt]
       properties:
         gateway:
           type: object
@@ -179,9 +379,18 @@ components:
           properties:
             state:
               type: string
-              enum: [boot, wait_usb, enumerate, find_at_interface, at_probe, sim_check, network_register, ready, degraded, recovery]
+              enum: [boot, wait_usb, enumerate, find_at_interface, at_probe, at_ready, sim_check, network_register, ready, degraded, recovery]
             registered:
               type: boolean
+            roaming:
+              type: boolean
+            sim:
+              type: string
+              enum: [unknown, ready, pin_required, puk_required, not_inserted, blocked, error]
+            model:
+              type: [string, "null"]
+            revision:
+              type: [string, "null"]
             operator:
               type: [string, "null"]
             rssi_dbm:
@@ -189,9 +398,142 @@ components:
             usb_reconnects:
               type: integer
               minimum: 0
+            usb_mode_switch_attempts: {type: integer, minimum: 0}
+            usb_mode_switch_successes: {type: integer, minimum: 0}
+            usb_mode_switch_failures: {type: integer, minimum: 0}
+            usb_overcurrent: {type: boolean}
+            usb_power_cutoff_latched: {type: boolean}
+            usb_overcurrent_events: {type: integer, minimum: 0}
+            usb_power_cutoffs: {type: integer, minimum: 0}
             recovery_count:
               type: integer
               minimum: 0
+            last_recovery_action:
+              type: string
+              enum: [none, reinitialize, functional_reset, hard_reset]
+        sms:
+          type: object
+          additionalProperties: false
+          required: [outbound_queued, inbound_messages, delivery_reports, uncertain]
+          properties:
+            outbound_queued: {type: integer, minimum: 0}
+            inbound_messages: {type: integer, minimum: 0}
+            delivery_reports: {type: integer, minimum: 0}
+            uncertain: {type: integer, minimum: 0}
+            store_used: {type: integer, minimum: 0}
+            store_free: {type: integer, minimum: 0}
+            store_pruned: {type: integer, minimum: 0}
+            store_capacity_failures: {type: integer, minimum: 0}
+        idempotency:
+          type: object
+          additionalProperties: false
+          properties:
+            pending: {type: integer, minimum: 0}
+            finalized: {type: integer, minimum: 0}
+            free: {type: integer, minimum: 0}
+        ota:
+          type: object
+          additionalProperties: false
+          required: [pending_verify, confirmation_scheduled, update_in_progress, upload_attempts, upload_successes, upload_rejections, upload_failures, last_error]
+          properties:
+            pending_verify: {type: boolean}
+            confirmation_scheduled: {type: boolean}
+            update_in_progress: {type: boolean}
+            upload_attempts: {type: integer, minimum: 0}
+            upload_successes: {type: integer, minimum: 0}
+            upload_rejections: {type: integer, minimum: 0}
+            upload_failures: {type: integer, minimum: 0}
+            last_error: {type: integer}
+        mqtt:
+          type: object
+          additionalProperties: true
+          required: [enabled, connected]
+          properties:
+            enabled: {type: boolean}
+            connected: {type: boolean}
+            connects: {type: integer, minimum: 0}
+            disconnects: {type: integer, minimum: 0}
+            events_dropped: {type: integer, minimum: 0}
+            replay_cursor: {type: integer, minimum: 0}
+            replay_inflight_message_id: {type: integer, minimum: 0}
+            last_error: {type: integer}
+    FirmwareStatus:
+      type: object
+      additionalProperties: false
+      required: [running_version, running_partition, boot_version, boot_partition, pending_verify, confirmation_scheduled, update_in_progress, upload_attempts, upload_successes, upload_rejections, upload_failures, last_error]
+      properties:
+        running_version: {type: string, maxLength: 31}
+        running_partition: {type: string, maxLength: 16}
+        boot_version: {type: string, maxLength: 31}
+        boot_partition: {type: string, maxLength: 16}
+        pending_verify: {type: boolean}
+        confirmation_scheduled: {type: boolean}
+        update_in_progress: {type: boolean}
+        upload_attempts: {type: integer, minimum: 0}
+        upload_successes: {type: integer, minimum: 0}
+        upload_rejections: {type: integer, minimum: 0}
+        upload_failures: {type: integer, minimum: 0}
+        last_error: {type: integer}
+        last_candidate_version: {type: [string, "null"], maxLength: 31}
+    FirmwareUploadResult:
+      type: object
+      additionalProperties: false
+      required: [status, version, project, partition, sha256, size, rebooting]
+      properties:
+        status:
+          type: string
+          const: staged
+        version: {type: string, maxLength: 31}
+        project: {type: string, maxLength: 31}
+        partition: {type: string, maxLength: 16}
+        sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        size: {type: integer, minimum: 1}
+        rebooting: {type: boolean, const: true}
+    MqttConfig:
+      type: object
+      additionalProperties: false
+      required: [enabled, broker_uri, username, password_set, base_topic, home_assistant_enabled, discovery_prefix, default_recipient, ca_configured, tls]
+      properties:
+        enabled: {type: boolean}
+        broker_uri: {type: string, maxLength: 255}
+        username: {type: string, maxLength: 95}
+        password_set: {type: boolean}
+        base_topic: {type: string, maxLength: 127}
+        home_assistant_enabled: {type: boolean}
+        discovery_prefix: {type: string, maxLength: 63}
+        default_recipient:
+          oneOf:
+            - $ref: "#/components/schemas/E164"
+            - type: "null"
+        ca_configured: {type: boolean}
+        tls: {type: boolean}
+        connected: {type: boolean}
+        last_mqtt_error: {type: integer}
+    MqttConfigPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        enabled: {type: boolean}
+        broker_uri: {type: string, maxLength: 255}
+        username: {type: string, maxLength: 95}
+        password:
+          type: [string, "null"]
+          maxLength: 159
+          writeOnly: true
+        base_topic: {type: string, maxLength: 127}
+        home_assistant_enabled: {type: boolean}
+        discovery_prefix: {type: string, maxLength: 63}
+        default_recipient:
+          oneOf:
+            - $ref: "#/components/schemas/E164"
+            - type: "null"
+        ca_pem:
+          type: [string, "null"]
+          maxLength: 3071
+          writeOnly: true
     SendMessageRequest:
       type: object
       additionalProperties: false
@@ -212,16 +554,17 @@ components:
       required: [id, direction, status, text]
       properties:
         id:
-          type: string
+          type: integer
+          minimum: 1
         direction:
           type: string
           enum: [inbound, outbound]
         status:
           type: string
-          enum: [received, queued, sending, sent, delivered, failed]
+          enum: [partial, received, queued, sending, sent, delivered, failed, unsupported, uncertain]
         from:
           oneOf:
-            - $ref: "#/components/schemas/E164"
+            - $ref: "#/components/schemas/SmsOriginator"
             - type: "null"
         to:
           oneOf:
@@ -229,13 +572,23 @@ components:
             - type: "null"
         text:
           type: string
-        created_at:
+        service_center_timestamp:
           type: [string, "null"]
-          format: date-time
-        network_reference:
-          type: [string, "null"]
-        failure_reason:
-          type: [string, "null"]
+        delivery_report_requested:
+          type: boolean
+        segment_count:
+          type: integer
+          minimum: 0
+        send_attempts:
+          type: integer
+          minimum: 0
+        last_modem_error:
+          type: [integer, "null"]
+    SmsOriginator:
+      type: string
+      minLength: 1
+      maxLength: 24
+      description: Numeric or network-provided alphanumeric SMS originator.
     E164:
       type: string
       pattern: '^\\+[1-9][0-9]{1,14}$'

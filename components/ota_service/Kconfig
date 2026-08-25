@@ -1,0 +1,12 @@
+menu "Gateway OTA"
+
+config GATEWAY_OTA_CONFIRM_DELAY_SECONDS
+    int "OTA boot confirmation delay (seconds)"
+    default 30
+    range 5 300
+    help
+        A newly booted OTA image remains pending verification until all critical
+        services have initialized and this additional stability window has
+        elapsed. Any reset before confirmation causes bootloader rollback.
+
+endmenu

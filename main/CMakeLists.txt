@@ -1,5 +1,4 @@
 idf_component_register(
     SRCS "app_main.c"
-    INCLUDE_DIRS "."
-    REQUIRES app_update esp_app_format nvs_flash board modem_core
+    REQUIRES board modem_core gateway_security api_idempotency network_service gateway_settings mqtt_service api_server ota_service app_update nvs_flash
 )

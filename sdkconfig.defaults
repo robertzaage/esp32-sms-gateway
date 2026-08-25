@@ -2,8 +2,8 @@
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
 
-# Dual OTA slots with rollback. The application marks an image valid after
-# completing its minimum boot self-test.
+# Dual OTA slots with rollback. A new image is marked valid only after all
+# critical services initialize and the configured stability window elapses.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
@@ -18,3 +18,19 @@ CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=y
 # Sensible production defaults. Verbose modem traces can be enabled at runtime
 # later without making DEBUG the firmware-wide default.
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# M5 secure SoftAP Wi-Fi provisioning. IDF 6 disables protocomm security
+# versions unless explicitly enabled.
+CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1=y
+CONFIG_NETWORK_PROV_NETWORK_TYPE_WIFI=y
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+
+# CA bundle for mqtts:// brokers without a custom CA
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+
+# External powered USB hubs are supported for high-current cellular modems.
+CONFIG_USB_HOST_HUBS_SUPPORTED=y
+
+# M7 OTA rollback confirmation: after all critical services start, a new image
+# must remain alive for this window before it is marked valid.
+CONFIG_GATEWAY_OTA_CONFIRM_DELAY_SECONDS=30
