@@ -222,9 +222,10 @@ esp_err_t network_service_init(network_service_event_callback_t cb, void *user_c
         snprintf(s_snapshot.portal_ssid, sizeof(s_snapshot.portal_ssid), "%s-setup", s_snapshot.device_id);
         snprintf(s_snapshot.portal_passphrase, sizeof(s_snapshot.portal_passphrase), "%s", passphrase);
         wifi_config_t ap = {0};
-        snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "%s", s_snapshot.portal_ssid);
-        snprintf((char *)ap.ap.password, sizeof(ap.ap.password), "%s", passphrase);
-        ap.ap.ssid_len = strlen((char *)ap.ap.ssid);
+        const size_t portal_ssid_len = strlen(s_snapshot.portal_ssid);
+        memcpy(ap.ap.ssid, s_snapshot.portal_ssid, portal_ssid_len);
+        memcpy(ap.ap.password, passphrase, sizeof(passphrase));
+        ap.ap.ssid_len = portal_ssid_len;
         ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
         ap.ap.max_connection = 4;
         ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "portal Wi-Fi mode");

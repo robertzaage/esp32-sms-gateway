@@ -6,6 +6,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include "cJSON.h"
+#include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
@@ -80,8 +81,10 @@ static esp_err_t setup_handler(httpd_req_t *req)
     }
 
     wifi_config_t config = {0};
-    snprintf((char *)config.sta.ssid, sizeof(config.sta.ssid), "%s", ssid->valuestring);
-    snprintf((char *)config.sta.password, sizeof(config.sta.password), "%s", password->valuestring);
+    const size_t ssid_len = strlen(ssid->valuestring);
+    const size_t password_len = strlen(password->valuestring);
+    memcpy(config.sta.ssid, ssid->valuestring, ssid_len);
+    memcpy(config.sta.password, password->valuestring, password_len);
     config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
     config.sta.failure_retry_cnt = 5;
     const esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &config);
