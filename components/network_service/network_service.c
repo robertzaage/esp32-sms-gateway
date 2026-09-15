@@ -20,6 +20,7 @@
 #define RECONNECT_MIN_MS 1000U
 #define RECONNECT_MAX_MS 60000U
 #define PORTAL_PASSWORD_CHARS 16
+#define PORTAL_FALLBACK_DISCONNECTS 3U
 
 static const char *TAG = "network";
 static network_service_snapshot_t s_snapshot;
@@ -31,6 +32,57 @@ static esp_netif_t *s_ap_netif;
 static esp_timer_handle_t s_reconnect_timer;
 static uint32_t s_reconnect_delay_ms = RECONNECT_MIN_MS;
 static bool s_sntp_started;
+static bool s_portal_start_requested;
+
+static void emit_snapshot(void);
+static void generate_portal_password(char out[PORTAL_PASSWORD_CHARS + 1]);
+
+static esp_err_t start_portal(bool wifi_already_started)
+{
+    if (s_ap_netif == NULL) {
+        s_ap_netif = esp_netif_create_default_wifi_ap();
+        if (s_ap_netif == NULL) return ESP_ERR_NO_MEM;
+    }
+    char passphrase[PORTAL_PASSWORD_CHARS + 1];
+    generate_portal_password(passphrase);
+    wifi_config_t ap = {0};
+    snprintf(s_snapshot.portal_ssid, sizeof(s_snapshot.portal_ssid), "%s-setup", s_snapshot.device_id);
+    snprintf(s_snapshot.portal_passphrase, sizeof(s_snapshot.portal_passphrase), "%s", passphrase);
+    const size_t portal_ssid_len = strlen(s_snapshot.portal_ssid);
+    memcpy(ap.ap.ssid, s_snapshot.portal_ssid, portal_ssid_len);
+    memcpy(ap.ap.password, passphrase, sizeof(passphrase));
+    ap.ap.ssid_len = portal_ssid_len;
+    ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    ap.ap.max_connection = 4;
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+    if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_AP, &ap);
+    if (err == ESP_OK && !wifi_already_started) err = esp_wifi_start();
+    if (err == ESP_OK) err = provisioning_portal_start(s_snapshot.portal_ssid, passphrase);
+    gateway_security_wipe(passphrase, sizeof(passphrase));
+    gateway_security_wipe(&ap, sizeof(ap));
+    if (err != ESP_OK) return err;
+    portENTER_CRITICAL(&s_lock);
+    s_snapshot.provisioning = true;
+    s_portal_start_requested = false;
+    portEXIT_CRITICAL(&s_lock);
+    emit_snapshot();
+    return ESP_OK;
+}
+
+static void portal_fallback_task(void *arg)
+{
+    (void)arg;
+    const esp_err_t err = start_portal(true);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "could not start recovery portal: %s", esp_err_to_name(err));
+        portENTER_CRITICAL(&s_lock);
+        s_snapshot.provisioning = false;
+        s_portal_start_requested = false;
+        portEXIT_CRITICAL(&s_lock);
+        emit_snapshot();
+    }
+    vTaskDelete(NULL);
+}
 
 static void copy_snapshot(network_service_snapshot_t *out)
 {
@@ -139,8 +191,25 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
         ++s_snapshot.disconnects;
         s_snapshot.last_disconnect_reason = event != NULL ? event->reason : 0;
         const bool provisioning = s_snapshot.provisioning;
+        const bool begin_portal = !provisioning && !s_portal_start_requested &&
+                                  s_snapshot.disconnects >= PORTAL_FALLBACK_DISCONNECTS;
+        if (begin_portal) {
+            s_portal_start_requested = true;
+            s_snapshot.provisioning = true; /* suppress further reconnects */
+        }
         portEXIT_CRITICAL(&s_lock);
         emit_snapshot();
+        if (begin_portal) {
+            (void)esp_timer_stop(s_reconnect_timer);
+            if (xTaskCreate(portal_fallback_task, "portal_fallback", 4096, NULL, 5, NULL) != pdPASS) {
+                portENTER_CRITICAL(&s_lock);
+                s_snapshot.provisioning = false;
+                s_portal_start_requested = false;
+                portEXIT_CRITICAL(&s_lock);
+                emit_snapshot();
+            }
+            return;
+        }
         if (!provisioning) {
             schedule_reconnect();
         }
@@ -215,29 +284,7 @@ esp_err_t network_service_init(network_service_event_callback_t cb, void *user_c
     portEXIT_CRITICAL(&s_lock);
 
     if (!provisioned) {
-        s_ap_netif = esp_netif_create_default_wifi_ap();
-        if (s_ap_netif == NULL) return ESP_ERR_NO_MEM;
-        char passphrase[PORTAL_PASSWORD_CHARS + 1];
-        generate_portal_password(passphrase);
-        snprintf(s_snapshot.portal_ssid, sizeof(s_snapshot.portal_ssid), "%s-setup", s_snapshot.device_id);
-        snprintf(s_snapshot.portal_passphrase, sizeof(s_snapshot.portal_passphrase), "%s", passphrase);
-        wifi_config_t ap = {0};
-        const size_t portal_ssid_len = strlen(s_snapshot.portal_ssid);
-        memcpy(ap.ap.ssid, s_snapshot.portal_ssid, portal_ssid_len);
-        memcpy(ap.ap.password, passphrase, sizeof(passphrase));
-        ap.ap.ssid_len = portal_ssid_len;
-        ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
-        ap.ap.max_connection = 4;
-        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "portal Wi-Fi mode");
-        ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap), TAG, "portal AP config");
-        ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "portal Wi-Fi start");
-        err = provisioning_portal_start(s_snapshot.portal_ssid, passphrase);
-        gateway_security_wipe(passphrase, sizeof(passphrase));
-        gateway_security_wipe(&ap, sizeof(ap));
-        if (err != ESP_OK) return err;
-        portENTER_CRITICAL(&s_lock);
-        s_snapshot.provisioning = true;
-        portEXIT_CRITICAL(&s_lock);
+        ESP_RETURN_ON_ERROR(start_portal(false), TAG, "start setup portal");
     } else {
         ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "wifi mode");
         ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi start");

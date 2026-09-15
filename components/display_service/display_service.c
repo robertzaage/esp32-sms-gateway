@@ -81,7 +81,15 @@ static void display_task(void *arg)
 void display_service_network_event(const network_service_snapshot_t *snapshot, void *user_ctx)
 {
     (void)user_ctx; if (snapshot == NULL) return;
-    portENTER_CRITICAL(&s_lock); s_snapshot = *snapshot; s_dirty = true; portEXIT_CRITICAL(&s_lock);
+    portENTER_CRITICAL(&s_lock);
+    const bool changed = s_snapshot.provisioning != snapshot->provisioning ||
+                         s_snapshot.connected != snapshot->connected ||
+                         strcmp(s_snapshot.ipv4, snapshot->ipv4) != 0 ||
+                         strcmp(s_snapshot.portal_ssid, snapshot->portal_ssid) != 0 ||
+                         strcmp(s_snapshot.portal_passphrase, snapshot->portal_passphrase) != 0;
+    s_snapshot = *snapshot;
+    if (changed) s_dirty = true;
+    portEXIT_CRITICAL(&s_lock);
 }
 esp_err_t display_service_init(void)
 {
