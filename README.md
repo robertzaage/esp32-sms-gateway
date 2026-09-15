@@ -47,12 +47,9 @@ Use the `*-ota.bin` file only for OTA updates. Details are in [OTA and releases]
 
 ## First boot
 
-Open the board's serial console after flashing. On a fresh device the firmware prints two values you need for setup:
+On a fresh device the built-in display shows a unique WPA2 setup Wi-Fi name and password. Join that network, then open `http://192.168.4.1` (most phones and laptops open it automatically). The portal accepts the home Wi-Fi credentials and requires you to create a 32–128 character REST bearer token. Save that token before submitting: only its SHA-256 digest is retained by the gateway.
 
-- a Wi-Fi provisioning service name and temporary proof-of-possession value;
-- `INITIAL_API_TOKEN=...`, the REST bearer token shown only when it is first created.
-
-Provision Wi-Fi with an ESP-IDF-compatible provisioning client. After the gateway joins your network, `/api/v1/health` is available without authentication and the rest of `/api/v1/*` requires the bearer token.
+The setup access point and portal stop as soon as the credentials have been saved. After the gateway joins your network, `/api/v1/health` is available without authentication and the rest of `/api/v1/*` requires the bearer token.
 
 Check the gateway:
 

@@ -19,10 +19,7 @@ CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=y
 # later without making DEBUG the firmware-wide default.
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
-# M5 secure SoftAP Wi-Fi provisioning. IDF 6 disables protocomm security
-# versions unless explicitly enabled.
-CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1=y
-CONFIG_NETWORK_PROV_NETWORK_TYPE_WIFI=y
+# Browser setup portal runs on a WPA2-protected SoftAP.
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 
 # CA bundle for mqtts:// brokers without a custom CA

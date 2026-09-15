@@ -4,21 +4,17 @@ The gateway joins Wi-Fi as a station and exposes a small REST management API on 
 
 The complete machine-readable contract is [api/openapi.yaml](../api/openapi.yaml). This page covers the parts an operator normally needs.
 
-## Wi-Fi provisioning
+## Wi-Fi provisioning portal
 
-A fresh device starts Espressif SoftAP provisioning. The serial console prints the provisioning service name and a temporary proof-of-possession value. Wi-Fi credentials are handled by ESP-IDF and are not printed after provisioning succeeds.
+A fresh device starts a WPA2-protected SoftAP. Its unique SSID and randomly generated password are shown on the board's LCD; no setup secret is printed to the serial console. Join the access point and open `http://192.168.4.1`. The captive DNS responder makes common operating-system captive-portal checks land on the same page.
+
+The page accepts a home Wi-Fi SSID/password and a required 32–128 character API token. Credentials are saved through the ESP-IDF Wi-Fi driver and the token is immediately hashed with SHA-256 before it is committed to NVS. The portal, DNS responder and SoftAP stop before the gateway reconnects as a station.
 
 Once connected, the gateway uses capped reconnect backoff and starts SNTP after it has an IPv4 address.
 
 ## API token
 
-On first boot the gateway creates a random 256-bit bearer token and prints it once:
-
-```text
-INITIAL_API_TOKEN=...
-```
-
-Only a SHA-256 digest of that token is stored in NVS. Save the plaintext token somewhere appropriate for your deployment.
+Create and save the token in the setup portal. It is not logged or displayed after the form is submitted. Only its SHA-256 digest is stored in NVS.
 
 `/api/v1/health` is unauthenticated. Other `/api/v1/*` routes require:
 

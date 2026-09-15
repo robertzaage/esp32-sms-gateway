@@ -7,6 +7,7 @@
 #include "nvs_flash.h"
 
 #include "gateway_board.h"
+#include "display_service.h"
 #include "gateway_security.h"
 #include "api_idempotency.h"
 #include "network_service.h"
@@ -17,6 +18,19 @@
 #include "ota_service.h"
 
 static const char *TAG = "gateway";
+static bool s_api_ready;
+static bool s_api_started;
+
+static void network_event(const network_service_snapshot_t *snapshot, void *user_ctx)
+{
+    (void)user_ctx;
+    display_service_network_event(snapshot, NULL);
+    if (s_api_ready && !s_api_started && snapshot != NULL && snapshot->connected) {
+        const esp_err_t err = api_server_init();
+        if (err == ESP_OK) s_api_started = true;
+        else ESP_LOGE(TAG, "management API did not start: %s", esp_err_to_name(err));
+    }
+}
 
 static esp_err_t init_nvs(void)
 {
@@ -43,21 +57,21 @@ void app_main(void)
         ESP_LOGW(TAG, "USB host over-current is asserted at boot");
     }
 
-    char bootstrap_token[GATEWAY_API_TOKEN_HEX_LEN + 1] = {0};
     bool token_generated = false;
-    ESP_ERROR_CHECK(gateway_security_init(bootstrap_token, sizeof(bootstrap_token), &token_generated));
+    ESP_ERROR_CHECK(gateway_security_init(NULL, 0, &token_generated));
+    (void)token_generated;
     ESP_ERROR_CHECK(gateway_idempotency_init());
-    if (token_generated) {
-        /* Deliberate one-time serial bootstrap secret; it is never persisted in plaintext. */
-        printf("INITIAL_API_TOKEN=%s\n", bootstrap_token);
-        gateway_security_wipe(bootstrap_token, sizeof(bootstrap_token));
-    }
+    ESP_ERROR_CHECK(display_service_init());
 
     ESP_ERROR_CHECK(modem_core_init());
-    ESP_ERROR_CHECK(network_service_init(NULL, NULL));
+    ESP_ERROR_CHECK(network_service_init(network_event, NULL));
     ESP_ERROR_CHECK(gateway_settings_init(network_service_device_id()));
     ESP_ERROR_CHECK(mqtt_service_init());
-    ESP_ERROR_CHECK(api_server_init());
+    s_api_ready = true;
+    if (network_service_is_online()) {
+        ESP_ERROR_CHECK(api_server_init());
+        s_api_started = true;
+    }
 
     /*
      * All critical services reached their startup boundary. A newly booted OTA

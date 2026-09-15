@@ -12,6 +12,8 @@ extern "C" {
 #define NETWORK_DEVICE_ID_MAX 24
 #define NETWORK_HOSTNAME_MAX 40
 #define NETWORK_IPV4_MAX 16
+#define NETWORK_PORTAL_SSID_MAX 33
+#define NETWORK_PORTAL_PASSWORD_MAX 17
 
 typedef struct {
     bool initialized;
@@ -25,6 +27,8 @@ typedef struct {
     char device_id[NETWORK_DEVICE_ID_MAX];
     char hostname[NETWORK_HOSTNAME_MAX];
     char ipv4[NETWORK_IPV4_MAX];
+    char portal_ssid[NETWORK_PORTAL_SSID_MAX];
+    char portal_passphrase[NETWORK_PORTAL_PASSWORD_MAX];
 } network_service_snapshot_t;
 
 typedef void (*network_service_event_callback_t)(const network_service_snapshot_t *snapshot,

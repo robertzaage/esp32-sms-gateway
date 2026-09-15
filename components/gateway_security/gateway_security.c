@@ -66,7 +66,7 @@ esp_err_t gateway_security_init(char *bootstrap_token, size_t bootstrap_capacity
         bootstrap_token[0] = '\0';
     }
 
-    nvs_handle_t handle;
+    nvs_handle_t handle = 0;
     esp_err_t err = nvs_open(SECURITY_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         return err;
@@ -83,7 +83,15 @@ esp_err_t gateway_security_init(char *bootstrap_token, size_t bootstrap_capacity
         nvs_close(handle);
         return err == ESP_OK ? ESP_ERR_INVALID_SIZE : err;
     }
-    if (bootstrap_token == NULL || bootstrap_capacity < GATEWAY_API_TOKEN_HEX_LEN + 1) {
+    /* A first-boot web portal will set the token before management services
+     * become reachable. Do not manufacture a serial-console secret in that
+     * case. */
+    if (bootstrap_token == NULL || bootstrap_capacity == 0) {
+        nvs_close(handle);
+        s_initialized = true;
+        return ESP_OK;
+    }
+    if (bootstrap_capacity < GATEWAY_API_TOKEN_HEX_LEN + 1) {
         nvs_close(handle);
         return ESP_ERR_INVALID_SIZE;
     }
@@ -109,6 +117,26 @@ esp_err_t gateway_security_init(char *bootstrap_token, size_t bootstrap_capacity
     s_initialized = true;
     *generated = true;
     return ESP_OK;
+}
+
+esp_err_t gateway_security_set_token(const char *token)
+{
+    if (token == NULL) return ESP_ERR_INVALID_ARG;
+    const size_t len = strlen(token);
+    if (len < 32 || len > 128) return ESP_ERR_INVALID_ARG;
+
+    uint8_t digest[GATEWAY_SHA256_LEN];
+    esp_err_t err = gateway_security_sha256(token, len, digest);
+    if (err != ESP_OK) return err;
+
+    nvs_handle_t handle = 0;
+    err = nvs_open(SECURITY_NAMESPACE, NVS_READWRITE, &handle);
+    if (err == ESP_OK) err = nvs_set_blob(handle, TOKEN_HASH_KEY, digest, sizeof(digest));
+    if (err == ESP_OK) err = nvs_commit(handle);
+    if (handle) nvs_close(handle);
+    if (err == ESP_OK) memcpy(s_token_hash, digest, sizeof(s_token_hash));
+    gateway_security_wipe(digest, sizeof(digest));
+    return err;
 }
 
 bool gateway_security_validate_bearer(const char *token)

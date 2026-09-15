@@ -17,6 +17,8 @@ extern "C" {
  * bootstrap_token and generated is set true. Only its SHA-256 digest is stored.
  */
 esp_err_t gateway_security_init(char *bootstrap_token, size_t bootstrap_capacity, bool *generated);
+/** Replace the API bearer token. The plaintext is never persisted. */
+esp_err_t gateway_security_set_token(const char *token);
 bool gateway_security_validate_bearer(const char *token);
 esp_err_t gateway_security_sha256(const void *data, size_t len, uint8_t out[GATEWAY_SHA256_LEN]);
 void gateway_security_wipe(void *data, size_t len);
