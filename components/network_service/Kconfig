@@ -1,0 +1,18 @@
+menu "Gateway Wi-Fi"
+
+config GATEWAY_WIFI_PORTAL_FALLBACK_SECONDS
+    int "Open the setup portal after this many seconds offline"
+    range 30 3600
+    default 180
+    help
+        When the saved Wi-Fi network cannot be reached for this long, the
+        gateway additionally opens its setup access point. It keeps retrying
+        the saved network in the background and closes the portal again as soon
+        as the connection is back.
+
+config GATEWAY_WIFI_MANUAL_PORTAL_SECONDS
+    int "Close a manually opened setup portal after (seconds)"
+    range 60 3600
+    default 600
+
+endmenu

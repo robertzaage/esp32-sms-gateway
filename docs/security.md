@@ -6,13 +6,13 @@ The gateway handles data that is easy to leak accidentally: SMS content, phone n
 
 The REST management listener is plain HTTP. Use it only on a trusted management LAN or through a trusted VPN/TLS reverse proxy. Do not forward the API or OTA endpoint directly to the Internet.
 
-On first boot, create the bearer token in the WPA2-protected local setup portal. It is never written to the serial console and only its SHA-256 digest is kept in NVS. Protect the plaintext token like a password.
+On first boot, set the bearer token in the WPA2-protected local setup portal, or let the portal generate one and show it once. It is never written to the serial console and only its SHA-256 digest is kept in NVS. Protect the plaintext token like a password.
 
 There is no arbitrary raw-AT REST or MQTT endpoint.
 
 ## Wi-Fi provisioning
 
-Initial Wi-Fi onboarding uses a unique WPA2 SoftAP whose password is randomly generated for each setup attempt and shown only on the physical display. The captive portal is local at `192.168.4.1`; it accepts the credentials over that protected link and then shuts down. Wi-Fi credentials are stored by the normal ESP-IDF Wi-Fi/NVS subsystem and do not appear in normal application logs.
+Wi-Fi onboarding uses a unique WPA2 SoftAP. Its random password is generated once per device, stored in NVS and shown only on the physical display. Anyone who can read the display, or hold the MENU button, can reconfigure the gateway, so physical access counts as administrative access. The captive portal is local at `192.168.4.1` and shuts down after a successful setup. The portal never returns stored Wi-Fi or MQTT passwords. Wi-Fi credentials are stored by the normal ESP-IDF Wi-Fi/NVS subsystem and do not appear in normal application logs.
 
 ## MQTT
 

@@ -1,5 +1,6 @@
 #include "gateway_settings.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include "gateway_security.h"
 #include "nvs.h"
@@ -74,22 +75,29 @@ esp_err_t gateway_settings_init(const char *device_id)
     if (s_mutex == NULL) return ESP_ERR_NO_MEM;
     esp_err_t err = nvs_open(SETTINGS_NAMESPACE, NVS_READWRITE, &s_nvs);
     if (err != ESP_OK) return err;
-    mqtt_record_t record;
-    size_t size = sizeof(record);
-    err = nvs_get_blob(s_nvs, MQTT_KEY, &record, &size);
-    if (err == ESP_OK && size == sizeof(record) && record.magic == SETTINGS_MAGIC && record.version == SETTINGS_VERSION) {
-        record_to_config(&record, &s_config);
-        gateway_security_wipe(&record, sizeof(record));
-        if (gateway_mqtt_config_validate(&s_config) != ESP_OK) {
-            gateway_security_wipe(&s_config, sizeof(s_config));
-            return ESP_ERR_INVALID_STATE;
-        }
+    /* The record is ~3.8 KB; keep it off the caller's (main task) stack. */
+    mqtt_record_t *record = calloc(1, sizeof(*record));
+    if (record == NULL) return ESP_ERR_NO_MEM;
+    size_t size = sizeof(*record);
+    err = nvs_get_blob(s_nvs, MQTT_KEY, record, &size);
+    if (err == ESP_OK && size == sizeof(*record) && record->magic == SETTINGS_MAGIC && record->version == SETTINGS_VERSION) {
+        record_to_config(record, &s_config);
+        err = gateway_mqtt_config_validate(&s_config);
     } else if (err == ESP_ERR_NVS_NOT_FOUND) {
-        gateway_mqtt_config_defaults(&s_config, device_id);
-    } else {
-        gateway_security_wipe(&record, sizeof(record));
-        return err == ESP_OK ? ESP_ERR_INVALID_VERSION : err;
+        err = ESP_OK;
+    } else if (err == ESP_OK) {
+        err = ESP_ERR_INVALID_VERSION;
     }
+    gateway_security_wipe(record, sizeof(*record));
+    free(record);
+    if (err != ESP_OK) {
+        /* A corrupt or incompatible record must not keep the gateway from booting:
+         * fall back to defaults so the setup portal can store a fresh config. */
+        gateway_security_wipe(&s_config, sizeof(s_config));
+        (void)nvs_erase_key(s_nvs, MQTT_KEY);
+        (void)nvs_commit(s_nvs);
+    }
+    if (err != ESP_OK || !s_config.base_topic[0]) gateway_mqtt_config_defaults(&s_config, device_id);
     s_initialized = true;
     return ESP_OK;
 }
@@ -110,15 +118,18 @@ esp_err_t gateway_settings_set_mqtt(const gateway_mqtt_config_t *config)
     if (!s_initialized || s_mutex == NULL) return ESP_ERR_INVALID_STATE;
     esp_err_t err = gateway_mqtt_config_validate(config);
     if (err != ESP_OK) return err;
-    mqtt_record_t record;
-    config_to_record(config, &record);
+    mqtt_record_t *record = calloc(1, sizeof(*record));
+    if (record == NULL) return ESP_ERR_NO_MEM;
+    config_to_record(config, record);
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
-        gateway_security_wipe(&record, sizeof(record));
+        gateway_security_wipe(record, sizeof(*record));
+        free(record);
         return ESP_ERR_TIMEOUT;
     }
-    err = nvs_set_blob(s_nvs, MQTT_KEY, &record, sizeof(record));
+    err = nvs_set_blob(s_nvs, MQTT_KEY, record, sizeof(*record));
     if (err == ESP_OK) err = nvs_commit(s_nvs);
-    gateway_security_wipe(&record, sizeof(record));
+    gateway_security_wipe(record, sizeof(*record));
+    free(record);
     if (err == ESP_OK) {
         gateway_security_wipe(&s_config, sizeof(s_config));
         s_config = *config;

@@ -6,15 +6,23 @@ The complete machine-readable contract is [api/openapi.yaml](../api/openapi.yaml
 
 ## Wi-Fi provisioning portal
 
-A fresh device starts a WPA2-protected SoftAP. Its unique SSID and randomly generated password are shown on the board's LCD; no setup secret is printed to the serial console. Join the access point and open `http://192.168.4.1`. The captive DNS responder makes common operating-system captive-portal checks land on the same page.
+The gateway opens a WPA2-protected SoftAP named `SMS-Gateway-XXXXXX` when:
 
-The page accepts a home Wi-Fi SSID/password and a required 32–128 character API token. Credentials are saved through the ESP-IDF Wi-Fi driver and the token is immediately hashed with SHA-256 before it is committed to NVS. The portal, DNS responder and SoftAP stop before the gateway reconnects as a station.
+- no Wi-Fi credentials are stored (first boot);
+- the saved network has been unreachable for `CONFIG_GATEWAY_WIFI_PORTAL_FALLBACK_SECONDS` (default 180 s). The gateway keeps retrying the saved network and closes the portal as soon as it reconnects;
+- the **MENU** button is held for `CONFIG_GATEWAY_DISPLAY_PORTAL_HOLD_SECONDS` (default 5 s). This portal closes after `CONFIG_GATEWAY_WIFI_MANUAL_PORTAL_SECONDS` (default 10 min).
 
-Once connected, the gateway uses capped reconnect backoff and starts SNTP after it has an IPv4 address.
+The SoftAP password is generated once, stored in NVS and shown only on the display. It uses uppercase letters and digits without look-alike characters. A captive DNS responder sends every lookup to `192.168.4.1`, so most devices open the page by themselves.
+
+The page offers a Wi-Fi scan, the Wi-Fi password, MQTT broker settings, Home Assistant discovery, a default notify recipient and the optional API token. Empty password and token fields keep the stored values. On submit, the gateway tests the new Wi-Fi credentials and reports `connecting`, `connected` or `failed` (with the 802.11 reason code) on the page and the display. On success it restarts so every service starts with the new settings.
+
+Portal endpoints (only reachable on the SoftAP): `GET /api/setup/info`, `GET /api/setup/scan`, `POST /api/setup` and `GET /api/setup/status`. The REST management API and the portal share port 80. The API is stopped while the portal is open and restarts automatically afterwards.
+
+Once connected, the gateway reconnects with capped backoff (1–30 s) and starts SNTP after it has an IPv4 address.
 
 ## API token
 
-Create and save the token in the setup portal. It is not logged or displayed after the form is submitted. Only its SHA-256 digest is stored in NVS.
+Set the token in the setup portal, or leave the field empty to have the gateway generate one. A generated token is shown once on the setup page and never logged. Only its SHA-256 digest is stored in NVS.
 
 `/api/v1/health` is unauthenticated. Other `/api/v1/*` routes require:
 

@@ -33,7 +33,6 @@ class RepositoryContractTests(unittest.TestCase):
         manifest = (ROOT / "main" / "idf_component.yml").read_text(encoding="utf-8")
         self.assertIn('idf: "==6.0.2"', manifest)
         self.assertIn('espressif/usb_host_cdc_acm: "==2.4.0"', manifest)
-        self.assertIn('espressif/network_provisioning: "==1.2.4"', manifest)
         self.assertIn('espressif/cjson: "==1.7.19~2"', manifest)
         self.assertIn('espressif/mqtt: "==1.1.0"', manifest)
 
@@ -242,7 +241,21 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn('add_component_common(evt, "event"', source)
         self.assertIn('add_component_common(notify, "notify"', source)
         self.assertIn('topic(t, "sms/send")', source)
-        self.assertIn('"homeassistant/status"', source)
+        # HA birth messages arrive on <discovery_prefix>/status.
+        self.assertIn('"%s/status", config.discovery_prefix', source)
+
+    def test_startup_stack_and_portal_contract(self):
+        defaults = (ROOT / "sdkconfig.defaults").read_text(encoding="utf-8")
+        self.assertIn("CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144", defaults)
+        settings = (ROOT / "components" / "gateway_settings" / "gateway_settings.c").read_text(encoding="utf-8")
+        mqtt = (ROOT / "components" / "mqtt_service" / "mqtt_service.c").read_text(encoding="utf-8")
+        # The ~3.8 KB MQTT config/record must never be a stack local again.
+        self.assertNotIn("mqtt_record_t record;", settings)
+        self.assertNotIn("gateway_mqtt_config_t config = {0};", mqtt)
+        self.assertNotIn("gateway_mqtt_config_t next = {0};", mqtt)
+        portal = (ROOT / "components" / "network_service" / "provisioning_portal.c").read_text(encoding="utf-8")
+        for route in ('"/api/setup/info"', '"/api/setup/scan"', '"/api/setup/status"', '"/api/setup"'):
+            self.assertIn(route, portal)
 
     def test_openapi_exposes_redacted_mqtt_config(self):
         text = (ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8")

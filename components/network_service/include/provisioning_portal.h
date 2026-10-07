@@ -2,8 +2,10 @@
 
 #include "esp_err.h"
 
-/** Starts the one-time WPA2 SoftAP browser portal. */
-esp_err_t provisioning_portal_start(const char *ssid, const char *passphrase);
+/**
+ * Start the browser setup portal (HTTP on port 80 plus captive DNS) on the
+ * SoftAP. The caller must have stopped any other server bound to port 80.
+ */
+esp_err_t provisioning_portal_start(void);
 /** Stops the portal and its captive-DNS responder. Safe when not started. */
 void provisioning_portal_stop(void);
-

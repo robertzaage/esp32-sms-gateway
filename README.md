@@ -4,7 +4,7 @@
 
 ESP32 SMS Gateway turns an **Espressif ESP32-S3-USB-OTG** board and a USB cellular modem into a small, local SMS appliance. It can send and receive text messages through REST or MQTT, integrates with Home Assistant, keeps important message state in flash, and supports rollback-safe OTA updates.
 
-The first supported modem family is Huawei. Development currently targets a modem that exposes USB ID `12d1:1506` after mode switching.
+The first supported modem family is Huawei. The reference modem is a Huawei E3372 with "stick" (serial modem) firmware: it boots as USB storage `12d1:1f01` and is switched to its AT-capable modem mode `12d1:1506`. HiLink firmware (`12d1:14dc`) has no AT port and is not supported.
 
 The firmware builds successfully in GitHub Actions with ESP-IDF 6.0.2. Physical modem testing is still important before relying on it for unattended or safety-critical use.
 
@@ -47,9 +47,19 @@ Use the `*-ota.bin` file only for OTA updates. Details are in [OTA and releases]
 
 ## First boot
 
-On a fresh device the built-in display shows a unique WPA2 setup Wi-Fi name and password. Join that network, then open `http://192.168.4.1` (most phones and laptops open it automatically). The portal accepts the home Wi-Fi credentials and requires you to create a 32–128 character REST bearer token. Save that token before submitting: only its SHA-256 digest is retained by the gateway.
+On a fresh device the display shows the setup Wi-Fi name (`SMS-Gateway-XXXXXX`) and its password. Join that network; most phones then open the setup page automatically, otherwise browse to `http://192.168.4.1`. The page lets you:
 
-The setup access point and portal stop as soon as the credentials have been saved. After the gateway joins your network, `/api/v1/health` is available without authentication and the rest of `/api/v1/*` requires the bearer token.
+- pick your Wi-Fi network from a scan and enter its password;
+- optionally enter your MQTT broker (host, port, TLS, username, password), enable Home Assistant discovery and set a default SMS recipient for the Home Assistant notify entity;
+- optionally set a REST API token. Leave it empty and the gateway generates one and shows it once on the page.
+
+When you save, the gateway tests the Wi-Fi credentials and shows the result on the page and the display. If they work, it restarts and joins your network. If they don't, the portal stays open so you can correct them.
+
+The setup password is generated once per device and stays the same across reboots. The portal also reopens on its own when the saved Wi-Fi has been unreachable for three minutes, while the gateway keeps retrying that network. To change settings later, hold the **MENU** button for five seconds.
+
+### Display
+
+The display shows Wi-Fi, MQTT and modem state, signal strength and the last received SMS. It switches off after 60 seconds without new content and lights up again when something changes, an SMS arrives, or any button is pressed. The image moves by a few pixels on every wake to spread pixel wear. Timeouts and the SMS preview are configurable under `Gateway display` in `idf.py menuconfig`.
 
 Check the gateway:
 

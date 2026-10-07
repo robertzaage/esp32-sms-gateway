@@ -13,8 +13,12 @@ static const char *TAG = "modem_core";
 static modem_state_t s_state = MODEM_STATE_BOOT;
 static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
 static modem_manager_state_t s_last_manager_state = MODEM_MANAGER_STOPPED;
-static sms_service_event_callback_t s_external_sms_event_cb;
-static void *s_external_sms_event_ctx;
+#define MODEM_CORE_SMS_OBSERVERS 3
+typedef struct {
+    sms_service_event_callback_t cb;
+    void *ctx;
+} sms_observer_t;
+static sms_observer_t s_sms_observers[MODEM_CORE_SMS_OBSERVERS];
 
 static esp_err_t at_transport_write(void *ctx, const uint8_t *data, size_t len, uint32_t timeout_ms)
 {
@@ -65,8 +69,8 @@ static void sms_event(sms_service_event_t event, const sms_message_t *message, v
     ESP_LOGI(TAG, "sms event=%d id=%" PRIu32 " direction=%d status=%s segments=%u",
              event, message->id, message->direction, sms_message_status_name(message->status),
              (unsigned)message->segment_count);
-    if (s_external_sms_event_cb != NULL) {
-        s_external_sms_event_cb(event, message, s_external_sms_event_ctx);
+    for (size_t i = 0; i < MODEM_CORE_SMS_OBSERVERS; ++i) {
+        if (s_sms_observers[i].cb != NULL) s_sms_observers[i].cb(event, message, s_sms_observers[i].ctx);
     }
 }
 
@@ -335,9 +339,15 @@ void modem_core_sms_set_event_replay_watermark(bool protection_enabled, uint32_t
 }
 
 
-esp_err_t modem_core_set_sms_event_callback(sms_service_event_callback_t cb, void *user_ctx)
+esp_err_t modem_core_add_sms_event_callback(sms_service_event_callback_t cb, void *user_ctx)
 {
-    s_external_sms_event_cb = cb;
-    s_external_sms_event_ctx = user_ctx;
-    return ESP_OK;
+    if (cb == NULL) return ESP_ERR_INVALID_ARG;
+    for (size_t i = 0; i < MODEM_CORE_SMS_OBSERVERS; ++i) {
+        if (s_sms_observers[i].cb == NULL) {
+            s_sms_observers[i].ctx = user_ctx;
+            s_sms_observers[i].cb = cb;
+            return ESP_OK;
+        }
+    }
+    return ESP_ERR_NO_MEM;
 }

@@ -19,6 +19,10 @@ extern "C" {
 esp_err_t gateway_security_init(char *bootstrap_token, size_t bootstrap_capacity, bool *generated);
 /** Replace the API bearer token. The plaintext is never persisted. */
 esp_err_t gateway_security_set_token(const char *token);
+/** Generate and store a new random token; the plaintext is returned once in out. */
+esp_err_t gateway_security_generate_token(char *out, size_t capacity);
+/** True once a management token has been configured. */
+bool gateway_security_has_token(void);
 bool gateway_security_validate_bearer(const char *token);
 esp_err_t gateway_security_sha256(const void *data, size_t len, uint8_t out[GATEWAY_SHA256_LEN]);
 void gateway_security_wipe(void *data, size_t len);

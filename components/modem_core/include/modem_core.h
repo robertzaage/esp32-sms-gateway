@@ -41,8 +41,8 @@ esp_err_t modem_core_sms_delete(uint32_t id);
 esp_err_t modem_core_sms_retry_uncertain(uint32_t id);
 esp_err_t modem_core_sms_diagnostics(sms_service_diagnostics_t *out);
 void modem_core_sms_set_event_replay_watermark(bool protection_enabled, uint32_t watermark);
-/** Register one non-blocking observer for SMS lifecycle events (MQTT bridge). */
-esp_err_t modem_core_set_sms_event_callback(sms_service_event_callback_t cb, void *user_ctx);
+/** Register a non-blocking observer for SMS lifecycle events (MQTT bridge, display). Call during init. */
+esp_err_t modem_core_add_sms_event_callback(sms_service_event_callback_t cb, void *user_ctx);
 
 /** Internal service API; management transports must not expose arbitrary AT by default. */
 esp_err_t modem_core_at_execute(const at_request_t *request, at_response_t *response);

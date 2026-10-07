@@ -24,6 +24,13 @@ static uint32_t s_power_cutoffs;
 #define PIN_BOOST_EN         GPIO_NUM_13
 #define PIN_LED_GREEN        GPIO_NUM_15
 #define PIN_LED_YELLOW       GPIO_NUM_16
+/* Front buttons, active low (ESP32-S3-USB-OTG BSP). */
+static const gpio_num_t s_button_pins[GATEWAY_BUTTON_COUNT] = {
+    [GATEWAY_BUTTON_OK] = GPIO_NUM_0,
+    [GATEWAY_BUTTON_UP] = GPIO_NUM_10,
+    [GATEWAY_BUTTON_DOWN] = GPIO_NUM_11,
+    [GATEWAY_BUTTON_MENU] = GPIO_NUM_14,
+};
 
 static esp_err_t set_output(gpio_num_t pin, int level)
 {
@@ -91,6 +98,12 @@ esp_err_t gateway_board_status_led_set(bool on)
     return gpio_set_level(PIN_LED_GREEN, on ? 1 : 0);
 }
 
+bool gateway_board_button_pressed(gateway_board_button_t button)
+{
+    if (button >= GATEWAY_BUTTON_COUNT) return false;
+    return gpio_get_level(s_button_pins[button]) == 0;
+}
+
 static void power_monitor_task(void *arg)
 {
     (void)arg;
@@ -156,6 +169,15 @@ esp_err_t gateway_board_init(void)
         .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_RETURN_ON_ERROR(gpio_config(&input), TAG, "over-current input init");
+
+    gpio_config_t buttons = {
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    for (size_t i = 0; i < GATEWAY_BUTTON_COUNT; ++i) buttons.pin_bit_mask |= 1ULL << s_button_pins[i];
+    ESP_RETURN_ON_ERROR(gpio_config(&buttons), TAG, "button input init");
 
     /* The MIC2005A current limiter must be enabled for board-provided VBUS. */
     ESP_RETURN_ON_ERROR(gpio_set_level(PIN_USB_LIMIT_EN, 1), TAG, "enable USB current limiter");

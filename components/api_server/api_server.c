@@ -756,10 +756,15 @@ static bool json_copy_optional_bool(cJSON *json, const char *name, bool *dst)
 static esp_err_t mqtt_config_get_handler(httpd_req_t *req)
 {
     if (!authorized(req) || !request_allowed(req, false)) return ESP_OK;
-    gateway_mqtt_config_t config = {0};
-    if (gateway_settings_get_mqtt(&config) != ESP_OK) return problem(req, 503, "urn:sms-gateway:mqtt-config", "Service Unavailable", "MQTT configuration is unavailable");
-    cJSON *obj = mqtt_config_json(&config);
-    gateway_security_wipe(&config, sizeof(config));
+    gateway_mqtt_config_t *config = calloc(1, sizeof(*config));
+    if (config == NULL) return ESP_ERR_NO_MEM;
+    if (gateway_settings_get_mqtt(config) != ESP_OK) {
+        free(config);
+        return problem(req, 503, "urn:sms-gateway:mqtt-config", "Service Unavailable", "MQTT configuration is unavailable");
+    }
+    cJSON *obj = mqtt_config_json(config);
+    gateway_security_wipe(config, sizeof(*config));
+    free(config);
     if (obj == NULL) return ESP_ERR_NO_MEM;
     const esp_err_t err = send_json(req, 200, obj);
     cJSON_Delete(obj);
@@ -776,34 +781,37 @@ static esp_err_t mqtt_config_patch_handler(httpd_req_t *req)
         "enabled", "broker_uri", "username", "password", "base_topic",
         "home_assistant_enabled", "discovery_prefix", "default_recipient", "ca_pem"
     };
-    gateway_mqtt_config_t config = {0};
-    esp_err_t err = gateway_settings_get_mqtt(&config);
+    gateway_mqtt_config_t *config = calloc(1, sizeof(*config));
+    esp_err_t err = config != NULL ? gateway_settings_get_mqtt(config) : ESP_ERR_NO_MEM;
     if (json == NULL || !json_has_only_fields(json, allowed, sizeof(allowed) / sizeof(allowed[0])) || err != ESP_OK ||
-        !json_copy_optional_bool(json, "enabled", &config.enabled) ||
-        !json_copy_optional_string(json, "broker_uri", config.broker_uri, sizeof(config.broker_uri), false) ||
-        !json_copy_optional_string(json, "username", config.username, sizeof(config.username), false) ||
-        !json_copy_optional_string(json, "password", config.password, sizeof(config.password), true) ||
-        !json_copy_optional_string(json, "base_topic", config.base_topic, sizeof(config.base_topic), false) ||
-        !json_copy_optional_bool(json, "home_assistant_enabled", &config.home_assistant_enabled) ||
-        !json_copy_optional_string(json, "discovery_prefix", config.discovery_prefix, sizeof(config.discovery_prefix), false) ||
-        !json_copy_optional_string(json, "default_recipient", config.default_recipient, sizeof(config.default_recipient), true) ||
-        !json_copy_optional_string(json, "ca_pem", config.ca_pem, sizeof(config.ca_pem), true) ||
-        gateway_mqtt_config_validate(&config) != ESP_OK) {
+        !json_copy_optional_bool(json, "enabled", &config->enabled) ||
+        !json_copy_optional_string(json, "broker_uri", config->broker_uri, sizeof(config->broker_uri), false) ||
+        !json_copy_optional_string(json, "username", config->username, sizeof(config->username), false) ||
+        !json_copy_optional_string(json, "password", config->password, sizeof(config->password), true) ||
+        !json_copy_optional_string(json, "base_topic", config->base_topic, sizeof(config->base_topic), false) ||
+        !json_copy_optional_bool(json, "home_assistant_enabled", &config->home_assistant_enabled) ||
+        !json_copy_optional_string(json, "discovery_prefix", config->discovery_prefix, sizeof(config->discovery_prefix), false) ||
+        !json_copy_optional_string(json, "default_recipient", config->default_recipient, sizeof(config->default_recipient), true) ||
+        !json_copy_optional_string(json, "ca_pem", config->ca_pem, sizeof(config->ca_pem), true) ||
+        gateway_mqtt_config_validate(config) != ESP_OK) {
         cJSON_Delete(json);
         gateway_security_wipe(body, (size_t)req->content_len + 1); free(body);
-        gateway_security_wipe(&config, sizeof(config));
+        if (config != NULL) gateway_security_wipe(config, sizeof(*config));
+        free(config);
         return problem(req, 400, "urn:sms-gateway:invalid-mqtt-config", "Bad Request", "Invalid MQTT configuration");
     }
-    err = gateway_settings_set_mqtt(&config);
+    err = gateway_settings_set_mqtt(config);
     if (err == ESP_OK) err = mqtt_service_reconfigure();
     cJSON_Delete(json);
     gateway_security_wipe(body, (size_t)req->content_len + 1); free(body);
     if (err != ESP_OK) {
-        gateway_security_wipe(&config, sizeof(config));
+        gateway_security_wipe(config, sizeof(*config));
+        free(config);
         return problem(req, 503, "urn:sms-gateway:mqtt-reconfigure", "Service Unavailable", "MQTT configuration was saved but the runtime could not apply it");
     }
-    cJSON *out = mqtt_config_json(&config);
-    gateway_security_wipe(&config, sizeof(config));
+    cJSON *out = mqtt_config_json(config);
+    gateway_security_wipe(config, sizeof(*config));
+    free(config);
     if (out == NULL) return ESP_ERR_NO_MEM;
     err = send_json(req, 200, out);
     cJSON_Delete(out);
@@ -866,7 +874,7 @@ static esp_err_t reboot_handler(httpd_req_t *req)
 static void register_uri(const char *uri, httpd_method_t method, esp_err_t (*handler)(httpd_req_t *))
 {
     const httpd_uri_t route = {.uri = uri, .method = method, .handler = handler, .user_ctx = NULL};
-    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &route));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(httpd_register_uri_handler(s_server, &route));
 }
 
 esp_err_t api_server_init(void)
@@ -900,4 +908,17 @@ esp_err_t api_server_init(void)
     register_uri("/api/v1/system/reboot", HTTP_POST, reboot_handler);
     ESP_LOGW(TAG, "REST API is HTTP-only; use a trusted LAN/reverse TLS proxy until device TLS credentials are implemented");
     return ESP_OK;
+}
+
+void api_server_stop(void)
+{
+    if (s_server == NULL) return;
+    httpd_stop(s_server);
+    s_server = NULL;
+    ESP_LOGI(TAG, "management API stopped");
+}
+
+bool api_server_running(void)
+{
+    return s_server != NULL;
 }

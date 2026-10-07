@@ -153,21 +153,35 @@ static bool connected(void)
     return value;
 }
 
-static bool config_snapshot(gateway_mqtt_config_t *out)
+/*
+ * The full gateway_mqtt_config_t is ~3.8 KB (CA PEM). Never copy it onto a task
+ * stack: the worker nests several of these helpers. Callers get the small,
+ * non-secret subset they actually need.
+ */
+typedef struct {
+    bool home_assistant_enabled;
+    char base_topic[MQTT_BASE_TOPIC_MAX];
+    char discovery_prefix[MQTT_DISCOVERY_PREFIX_MAX];
+    char default_recipient[MQTT_DEFAULT_RECIPIENT_MAX];
+} mqtt_config_view_t;
+
+static bool config_view(mqtt_config_view_t *out)
 {
     if (out == NULL || s_config_mutex == NULL) return false;
     if (xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) return false;
-    *out = s_config;
+    out->home_assistant_enabled = s_config.home_assistant_enabled;
+    memcpy(out->base_topic, s_config.base_topic, sizeof(out->base_topic));
+    memcpy(out->discovery_prefix, s_config.discovery_prefix, sizeof(out->discovery_prefix));
+    memcpy(out->default_recipient, s_config.default_recipient, sizeof(out->default_recipient));
     xSemaphoreGive(s_config_mutex);
     return true;
 }
 
 static void topic(char out[MQTT_TOPIC_MAX], const char *suffix)
 {
-    gateway_mqtt_config_t config = {0};
-    if (!config_snapshot(&config)) { out[0] = '\0'; return; }
-    snprintf(out, MQTT_TOPIC_MAX, "%s/%s", config.base_topic, suffix);
-    gateway_security_wipe(&config, sizeof(config));
+    if (s_config_mutex == NULL || xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) { out[0] = '\0'; return; }
+    snprintf(out, MQTT_TOPIC_MAX, "%s/%s", s_config.base_topic, suffix);
+    xSemaphoreGive(s_config_mutex);
 }
 
 static int publish_raw(const char *topic_name, const char *payload, int qos, int retain)
@@ -250,8 +264,8 @@ static cJSON *component(cJSON *components, const char *key)
 
 static void publish_discovery(void)
 {
-    gateway_mqtt_config_t config = {0};
-    if (!config_snapshot(&config) || !config.home_assistant_enabled) { gateway_security_wipe(&config, sizeof(config)); return; }
+    mqtt_config_view_t config = {0};
+    if (!config_view(&config) || !config.home_assistant_enabled) return;
     const char *device_id = network_service_device_id();
     const esp_app_desc_t *app = esp_app_get_description();
     char discovery_topic[MQTT_TOPIC_MAX];
@@ -327,7 +341,6 @@ static void publish_discovery(void)
 #undef SENSOR
     publish_json_object(discovery_topic, root, 1, 1);
     cJSON_Delete(root);
-    gateway_security_wipe(&config, sizeof(config));
 }
 
 static void publish_command_result(const char *request_id, bool ok, const char *code, uint32_t message_id, bool replayed)
@@ -412,24 +425,23 @@ static void handle_structured_send(const char *payload)
 
 static void handle_native_notify(const char *payload, size_t len)
 {
-    gateway_mqtt_config_t config = {0};
+    mqtt_config_view_t config = {0};
     sms_encoding_t encoding = SMS_ENCODING_UNKNOWN;
     size_t segments = 0;
-    if (!config_snapshot(&config) || !config.default_recipient[0] || len == 0 || len >= SMS_MESSAGE_TEXT_MAX ||
+    if (!config_view(&config) || !config.default_recipient[0] || len == 0 || len >= SMS_MESSAGE_TEXT_MAX ||
         !sms_submit_preflight(config.default_recipient, payload, 0x0100U, &encoding, &segments) ||
-        !gateway_rate_limiter_allow(&s_sms_limiter, 1.0, now_ms())) { gateway_security_wipe(&config, sizeof(config)); return; }
+        !gateway_rate_limiter_allow(&s_sms_limiter, 1.0, now_ms())) return;
     uint32_t id = 0;
     (void)modem_core_sms_send(config.default_recipient, payload, true, &id);
-    gateway_security_wipe(&config, sizeof(config));
 }
 
 static void reboot_task(void *arg) { (void)arg; vTaskDelay(pdMS_TO_TICKS(250)); esp_restart(); }
 
 static void subscribe_and_announce(void)
 {
-    gateway_mqtt_config_t config = {0};
-    if (!config_snapshot(&config)) return;
-    if (s_client_mutex == NULL || xSemaphoreTake(s_client_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) { gateway_security_wipe(&config, sizeof(config)); return; }
+    mqtt_config_view_t config = {0};
+    if (!config_view(&config)) return;
+    if (s_client_mutex == NULL || xSemaphoreTake(s_client_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) return;
     esp_mqtt_client_handle_t client = s_client;
     if (client != NULL) {
         char t[MQTT_TOPIC_MAX];
@@ -437,14 +449,16 @@ static void subscribe_and_announce(void)
         topic(t, "modem/restart"); (void)esp_mqtt_client_subscribe(client, t, 1);
         topic(t, "system/reboot"); (void)esp_mqtt_client_subscribe(client, t, 1);
         if (config.default_recipient[0]) { topic(t, "ha/notify"); (void)esp_mqtt_client_subscribe(client, t, 0); }
-        if (config.home_assistant_enabled) (void)esp_mqtt_client_subscribe(client, "homeassistant/status", 0);
+        if (config.home_assistant_enabled) {
+            snprintf(t, sizeof(t), "%s/status", config.discovery_prefix);
+            (void)esp_mqtt_client_subscribe(client, t, 0);
+        }
     }
     xSemaphoreGive(s_client_mutex);
     char availability[MQTT_TOPIC_MAX]; topic(availability, "availability");
     (void)publish_raw(availability, "online", 1, 1);
     publish_discovery();
     publish_status();
-    gateway_security_wipe(&config, sizeof(config));
 }
 
 static void handle_data_work(mqtt_work_t *work)
@@ -463,7 +477,13 @@ static void handle_data_work(mqtt_work_t *work)
             else {
                 topic(expected, "system/reboot");
                 if (strcmp(work->topic, expected) == 0) kind = MQTT_COMMAND_SYSTEM_REBOOT;
-                else if (strcmp(work->topic, "homeassistant/status") == 0) kind = MQTT_COMMAND_HA_STATUS;
+                else {
+                    mqtt_config_view_t config = {0};
+                    if (config_view(&config)) {
+                        snprintf(expected, sizeof(expected), "%s/status", config.discovery_prefix);
+                        if (strcmp(work->topic, expected) == 0) kind = MQTT_COMMAND_HA_STATUS;
+                    }
+                }
             }
         }
     }
@@ -491,9 +511,8 @@ static void handle_data_work(mqtt_work_t *work)
         (void)xTaskCreate(reboot_task, "mqtt_reboot", 2048, NULL, 3, NULL);
         break;
     case MQTT_COMMAND_HA_STATUS: {
-        gateway_mqtt_config_t config = {0};
-        const bool ha_enabled = config_snapshot(&config) && config.home_assistant_enabled;
-        gateway_security_wipe(&config, sizeof(config));
+        mqtt_config_view_t config = {0};
+        const bool ha_enabled = config_view(&config) && config.home_assistant_enabled;
         if (ha_enabled) { publish_discovery(); publish_status(); }
         break;
     }
@@ -768,14 +787,24 @@ static void sms_event_callback(sms_service_event_t event, const sms_message_t *m
     }
 }
 
+static esp_err_t reconfigure_finish(gateway_mqtt_config_t *configs, esp_err_t result)
+{
+    gateway_security_wipe(configs, 2 * sizeof(*configs));
+    free(configs);
+    return result;
+}
+
 esp_err_t mqtt_service_reconfigure(void)
 {
-    gateway_mqtt_config_t next = {0};
-    esp_err_t err = gateway_settings_get_mqtt(&next);
-    if (err != ESP_OK) return err;
-    if (gateway_mqtt_config_validate(&next) != ESP_OK) {
-        gateway_security_wipe(&next, sizeof(next));
-        return ESP_ERR_INVALID_ARG;
+    /* Both configs are ~3.8 KB each: keep them off the caller's stack. */
+    gateway_mqtt_config_t *configs = calloc(2, sizeof(gateway_mqtt_config_t));
+    if (configs == NULL) return ESP_ERR_NO_MEM;
+    gateway_mqtt_config_t *next = &configs[0];
+    gateway_mqtt_config_t *previous = &configs[1];
+    esp_err_t err = gateway_settings_get_mqtt(next);
+    if (err != ESP_OK) return reconfigure_finish(configs, err);
+    if (gateway_mqtt_config_validate(next) != ESP_OK) {
+        return reconfigure_finish(configs, ESP_ERR_INVALID_ARG);
     }
 
     /*
@@ -784,47 +813,43 @@ esp_err_t mqtt_service_reconfigure(void)
      * ownership to the new client only after its config has been installed.
      */
     char *next_ca_pem = NULL;
-    if (next.enabled && gateway_mqtt_uri_is_tls(next.broker_uri) && next.ca_pem[0] != '\0') {
-        next_ca_pem = owned_ca_duplicate(next.ca_pem);
+    if (next->enabled && gateway_mqtt_uri_is_tls(next->broker_uri) && next->ca_pem[0] != '\0') {
+        next_ca_pem = owned_ca_duplicate(next->ca_pem);
         if (next_ca_pem == NULL) {
-            gateway_security_wipe(&next, sizeof(next));
-            return ESP_ERR_NO_MEM;
+            return reconfigure_finish(configs, ESP_ERR_NO_MEM);
         }
     }
 
     if (s_runtime_mutex == NULL || xSemaphoreTake(s_runtime_mutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
         owned_ca_free(&next_ca_pem);
-        gateway_security_wipe(&next, sizeof(next));
-        return ESP_ERR_TIMEOUT;
+        return reconfigure_finish(configs, ESP_ERR_TIMEOUT);
     }
     if (s_client_mutex == NULL || xSemaphoreTake(s_client_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
         xSemaphoreGive(s_runtime_mutex);
         owned_ca_free(&next_ca_pem);
-        gateway_security_wipe(&next, sizeof(next));
-        return ESP_ERR_TIMEOUT;
+        return reconfigure_finish(configs, ESP_ERR_TIMEOUT);
     }
     if (s_config_mutex == NULL || xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
         xSemaphoreGive(s_client_mutex);
         xSemaphoreGive(s_runtime_mutex);
         owned_ca_free(&next_ca_pem);
-        gateway_security_wipe(&next, sizeof(next));
-        return ESP_ERR_TIMEOUT;
+        return reconfigure_finish(configs, ESP_ERR_TIMEOUT);
     }
 
-    gateway_mqtt_config_t previous = s_config;
+    *previous = s_config;
     xSemaphoreGive(s_config_mutex);
 
     esp_mqtt_client_handle_t old = active_client_get();
     if (old != NULL && connected()) {
         char old_topic[MQTT_TOPIC_MAX];
-        snprintf(old_topic, sizeof(old_topic), "%s/availability", previous.base_topic);
+        snprintf(old_topic, sizeof(old_topic), "%s/availability", previous->base_topic);
         (void)esp_mqtt_client_publish(old, old_topic, "offline", 0, 1, 1);
-        snprintf(old_topic, sizeof(old_topic), "%s/status", previous.base_topic);
+        snprintf(old_topic, sizeof(old_topic), "%s/status", previous->base_topic);
         (void)esp_mqtt_client_publish(old, old_topic, "", 0, 1, 1);
-        if (previous.home_assistant_enabled) {
+        if (previous->home_assistant_enabled) {
             char discovery_topic[MQTT_TOPIC_MAX];
             snprintf(discovery_topic, sizeof(discovery_topic), "%s/device/%s/config",
-                     previous.discovery_prefix, network_service_device_id());
+                     previous->discovery_prefix, network_service_device_id());
             (void)esp_mqtt_client_publish(old, discovery_topic, "", 0, 1, 1);
         }
     }
@@ -843,28 +868,24 @@ esp_err_t mqtt_service_reconfigure(void)
     owned_ca_free(&s_active_ca_pem);
 
     if (xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
-        gateway_security_wipe(&previous, sizeof(previous));
         owned_ca_free(&next_ca_pem);
-        gateway_security_wipe(&next, sizeof(next));
         xSemaphoreGive(s_client_mutex);
         xSemaphoreGive(s_runtime_mutex);
-        return ESP_ERR_TIMEOUT;
+        return reconfigure_finish(configs, ESP_ERR_TIMEOUT);
     }
     gateway_security_wipe(&s_config, sizeof(s_config));
-    s_config = next;
+    s_config = *next;
     xSemaphoreGive(s_config_mutex);
     modem_core_sms_set_event_replay_watermark(s_config.enabled, s_config.enabled ? s_replay_cursor : UINT32_MAX);
     portENTER_CRITICAL(&s_state_lock);
     s_diag.enabled = s_config.enabled;
     portEXIT_CRITICAL(&s_state_lock);
-    gateway_security_wipe(&previous, sizeof(previous));
 
     if (!s_config.enabled) {
         owned_ca_free(&next_ca_pem);
-        gateway_security_wipe(&next, sizeof(next));
         xSemaphoreGive(s_client_mutex);
         xSemaphoreGive(s_runtime_mutex);
-        return ESP_OK;
+        return reconfigure_finish(configs, ESP_OK);
     }
 
     char availability[MQTT_TOPIC_MAX];
@@ -899,10 +920,9 @@ esp_err_t mqtt_service_reconfigure(void)
     esp_mqtt_client_handle_t new_client = esp_mqtt_client_init(&cfg);
     if (new_client == NULL) {
         owned_ca_free(&next_ca_pem);
-        gateway_security_wipe(&next, sizeof(next));
         xSemaphoreGive(s_client_mutex);
         xSemaphoreGive(s_runtime_mutex);
-        return ESP_FAIL;
+        return reconfigure_finish(configs, ESP_FAIL);
     }
 
     /* Transfer certificate ownership before start: CONNECTED/ERROR events may
@@ -917,11 +937,9 @@ esp_err_t mqtt_service_reconfigure(void)
         (void)esp_mqtt_client_destroy(new_client);
         owned_ca_free(&s_active_ca_pem);
     }
-
-    gateway_security_wipe(&next, sizeof(next));
     xSemaphoreGive(s_client_mutex);
     xSemaphoreGive(s_runtime_mutex);
-    return err;
+    return reconfigure_finish(configs, err);
 }
 
 esp_err_t mqtt_service_init(void)
@@ -942,7 +960,7 @@ esp_err_t mqtt_service_init(void)
     portENTER_CRITICAL(&s_state_lock); s_diag.replay_cursor = s_replay_cursor; portEXIT_CRITICAL(&s_state_lock);
     modem_core_sms_set_event_replay_watermark(true, s_replay_cursor);
     if (xTaskCreate(worker_task, "mqtt_worker", MQTT_WORKER_STACK, NULL, 7, &s_worker) != pdPASS) return ESP_ERR_NO_MEM;
-    (void)modem_core_set_sms_event_callback(sms_event_callback, NULL);
+    (void)modem_core_add_sms_event_callback(sms_event_callback, NULL);
     portENTER_CRITICAL(&s_state_lock); s_diag.initialized = true; portEXIT_CRITICAL(&s_state_lock);
     return mqtt_service_reconfigure();
 }

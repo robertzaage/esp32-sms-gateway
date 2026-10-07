@@ -139,6 +139,25 @@ esp_err_t gateway_security_set_token(const char *token)
     return err;
 }
 
+esp_err_t gateway_security_generate_token(char *out, size_t capacity)
+{
+    if (out == NULL || capacity < GATEWAY_API_TOKEN_HEX_LEN + 1) return ESP_ERR_INVALID_ARG;
+    uint8_t random_bytes[GATEWAY_API_TOKEN_HEX_LEN / 2];
+    esp_fill_random(random_bytes, sizeof(random_bytes));
+    hex_encode(random_bytes, sizeof(random_bytes), out);
+    gateway_security_wipe(random_bytes, sizeof(random_bytes));
+    const esp_err_t err = gateway_security_set_token(out);
+    if (err != ESP_OK) gateway_security_wipe(out, capacity);
+    return err;
+}
+
+bool gateway_security_has_token(void)
+{
+    uint8_t any = 0;
+    for (size_t i = 0; i < sizeof(s_token_hash); ++i) any |= s_token_hash[i];
+    return s_initialized && any != 0;
+}
+
 bool gateway_security_validate_bearer(const char *token)
 {
     if (!s_initialized || token == NULL) {

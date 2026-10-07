@@ -2,7 +2,7 @@
 
 The gateway works with Home Assistant's built-in MQTT integration. No HACS component or custom integration is required.
 
-Enable MQTT and Home Assistant discovery in the gateway configuration. The gateway publishes one MQTT device with useful diagnostics, network registration, an incoming-SMS event, restart buttons and an optional notify entity.
+Enter your broker in the gateway's setup portal (see the main README; hold MENU for five seconds to reopen it) and keep Home Assistant discovery enabled. The gateway publishes one MQTT device with useful diagnostics, network registration, an incoming-SMS event, restart buttons and an optional notify entity.
 
 ## Receive SMS
 

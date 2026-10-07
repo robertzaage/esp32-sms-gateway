@@ -35,6 +35,17 @@ esp_err_t gateway_board_power_diagnostics(gateway_board_power_diagnostics_t *out
 /** Green status LED. */
 esp_err_t gateway_board_status_led_set(bool on);
 
+typedef enum {
+    GATEWAY_BUTTON_OK = 0, /* also BOOT: do not hold while resetting */
+    GATEWAY_BUTTON_UP,
+    GATEWAY_BUTTON_DOWN,
+    GATEWAY_BUTTON_MENU,
+    GATEWAY_BUTTON_COUNT,
+} gateway_board_button_t;
+
+/** True while the given front button is held down. */
+bool gateway_board_button_pressed(gateway_board_button_t button);
+
 #ifdef __cplusplus
 }
 #endif

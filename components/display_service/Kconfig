@@ -1,0 +1,27 @@
+menu "Gateway display"
+
+config GATEWAY_DISPLAY_TIMEOUT_SECONDS
+    int "Turn the display off after this many seconds without new content (0 = never)"
+    range 0 3600
+    default 60
+    help
+        The display wakes up whenever Wi-Fi, MQTT or modem state changes, an
+        SMS arrives, or a front button is pressed.
+
+config GATEWAY_DISPLAY_SETUP_TIMEOUT_SECONDS
+    int "Display timeout while the setup portal is open (0 = never)"
+    range 0 3600
+    default 300
+
+config GATEWAY_DISPLAY_SMS_PREVIEW
+    bool "Show the beginning of the last received SMS"
+    default y
+    help
+        Disable to show only the sender and time of the last SMS.
+
+config GATEWAY_DISPLAY_PORTAL_HOLD_SECONDS
+    int "Hold MENU this many seconds to open the setup portal"
+    range 2 15
+    default 5
+
+endmenu
