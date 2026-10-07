@@ -8,7 +8,7 @@ The REST management listener is plain HTTP. Use it only on a trusted management 
 
 On first boot, set the bearer token in the WPA2-protected local setup portal, or let the portal generate one and show it once. It is never written to the serial console and only its SHA-256 digest is kept in NVS. Protect the plaintext token like a password.
 
-There is no arbitrary raw-AT REST or MQTT endpoint.
+`POST /api/v1/modem/at` passes single AT commands to the modem for diagnostics (only `AT+CMGS`/`AT+CMGW` are refused). A token holder can therefore read SMS stored on the modem, the IMEI and SIM details, and change modem settings. This adds no new trust level, because the same token can already install firmware, but treat the token as full control of the modem. There is no AT access over MQTT.
 
 ## Wi-Fi provisioning
 
@@ -16,7 +16,18 @@ Wi-Fi onboarding uses a unique WPA2 SoftAP. Its random password is generated onc
 
 ## MQTT
 
-Use `mqtts://` when the broker is not on a trusted network. TLS verifies the broker using either a configured private CA or Espressif's certificate bundle.
+Use `mqtts://` when the broker is not on a trusted network. TLS verifies the broker using either a configured private CA or Espressif's certificate bundle (public CAs such as Let's Encrypt).
+
+Give the gateway its own broker account limited to its topics. With Mosquitto ACLs that is:
+
+```text
+user sms-gateway
+topic readwrite sms-gateway/<device_id>/#
+topic write homeassistant/device/<device_id>/config
+topic read homeassistant/status
+```
+
+Adjust the first line if you change `base_topic`, and the last two if you change `discovery_prefix`.
 
 MQTT passwords and custom CA content are write-only through the management API and are not returned by configuration reads. The service keeps private CA memory alive for the full MQTT client lifetime because ESP-MQTT retains a pointer to that data.
 

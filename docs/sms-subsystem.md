@@ -29,7 +29,11 @@ read from modem
 
 If persistence fails, the modem copy is left in place. Storage pressure should therefore cause backpressure rather than silent message loss.
 
-The service handles stored-message notifications, direct incoming SMS/delivery-report URCs and an inbox scan after the modem becomes ready. Multipart parts can arrive across reboots; assembly state is durable.
+The service handles stored-message notifications, direct incoming SMS/delivery-report URCs, an inbox scan after the modem becomes ready and an inbox poll every 60 seconds as a safety net for missed notifications. Multipart parts can arrive across reboots; assembly state is durable.
+
+## SMS setup
+
+Before sending, the service switches the modem to PDU mode (`AT+CMGF=0`) and enables new-message indications with `AT+CNMI`. Modem firmware differs in which `AT+CNMI` modes it accepts, so several variants are tried in order (the E3372 reference modem uses `2,1,0,2,0`). Outgoing messages wait until this setup has succeeded; a failed setup is retried every 30 seconds. `/api/v1/status` reports the result as `sms.pdu_mode_configured`, and the last failing command as `sms.setup_failed`.
 
 ## Sending messages
 

@@ -4,7 +4,7 @@ The modem manager turns a working AT connection into a service that can run unat
 
 ## Initialization
 
-After the USB layer finds a working AT port, the manager applies a conservative modem profile. It disables command echo, enables verbose modem errors, reads basic identity information, checks the SIM, enables registration notifications and starts registration/signal polling.
+After the USB layer finds a working AT port, the manager applies a conservative modem profile. It disables command echo, enables verbose modem errors, turns off Huawei's periodic status reports (`AT^CURC=0`), routes unsolicited results to the modem port (`AT^PORTSEL=1`), reads basic identity information, checks the SIM, enables registration notifications and starts registration/signal polling.
 
 Older Huawei firmware does not support every packet or EPS registration command. Unsupported optional commands are tolerated rather than treated as a broken modem.
 
@@ -36,7 +36,7 @@ Healthy polling resets the escalation history.
 
 When a powered hub supplies the modem, the board normally cannot perform a true power cycle. The gateway reports that limitation and remains degraded rather than claiming a hard reset occurred.
 
-The ESP32 itself is not rebooted as ordinary modem recovery. Modem faults should stay isolated to the modem whenever possible.
+The ESP32 itself is not rebooted as ordinary modem recovery. Modem faults should stay isolated to the modem whenever possible. The one exception is a Huawei mode-switch USB transfer that cannot be cancelled safely: the gateway then restarts and reports `restart_cause` `USB mode-switch transfer stuck` in `/api/v1/status`.
 
 ## Diagnostics
 

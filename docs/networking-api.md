@@ -1,6 +1,6 @@
 # Networking and REST API
 
-The gateway joins Wi-Fi as a station and exposes a small REST management API on the local network.
+The gateway joins Wi-Fi as a station and exposes a small REST management API on the local network. The examples use `$GATEWAY` for `http://<gateway IP>`; the IP is shown on the display. The gateway registers the DHCP hostname `sms-gateway-xxxxxx`, but has no mDNS (`.local`) name.
 
 The complete machine-readable contract is [api/openapi.yaml](../api/openapi.yaml). This page covers the parts an operator normally needs.
 
@@ -35,20 +35,27 @@ The management listener is plain HTTP. Keep it on a trusted LAN or access it thr
 ## Check status
 
 ```sh
-curl http://sms-gateway.local/api/v1/health
+curl $GATEWAY/api/v1/health
 
 curl \
   -H "Authorization: Bearer $TOKEN" \
-  http://sms-gateway.local/api/v1/status
+  $GATEWAY/api/v1/status
 ```
 
-`/status` includes network, modem/SIM, signal, SMS journal pressure, USB recovery/over-current, idempotency, MQTT replay and OTA state.
+`/status` includes:
+
+- `gateway`: version, uptime, Wi-Fi/IP, why the gateway last started (`reset_reason`, `restart_cause`), crash summary and safe mode, and free internal RAM (`heap`);
+- `modem`: state, SIM, registration, operator, signal, USB mode switch and over-current counters, recovery;
+- `sms`: queue and journal counters, whether SMS setup succeeded (`pdu_mode_configured`, `setup_failed`) and inbox polling;
+- `idempotency`, `ota` and `mqtt` (connection and replay state).
+
+The exact fields are in the OpenAPI contract.
 
 ## Send SMS
 
 ```sh
 curl --fail-with-body \
-  -X POST http://sms-gateway.local/api/v1/messages \
+  -X POST $GATEWAY/api/v1/messages \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: invoice-alert-00042' \
@@ -82,7 +89,7 @@ The API can submit a volatile SIM PIN, request modem recovery and reboot the gat
 `POST /api/v1/modem/at` runs one AT command on the modem and returns its response lines, for hardware bring-up and troubleshooting:
 
 ```sh
-curl -X POST http://sms-gateway.local/api/v1/modem/at \
+curl -X POST $GATEWAY/api/v1/modem/at \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"command":"AT+CPMS?","timeout_ms":10000}'
@@ -92,7 +99,16 @@ The command must start with `AT` and must not contain line breaks. `timeout_ms` 
 
 ## MQTT configuration
 
-`GET /api/v1/config/mqtt` returns redacted settings and runtime state. `PATCH /api/v1/config/mqtt` updates broker, TLS and Home Assistant settings. Passwords and private CA contents are write-only; reads expose only whether those values are configured.
+`GET /api/v1/config/mqtt` returns redacted settings and runtime state. `PATCH /api/v1/config/mqtt` updates only the fields you send:
+
+```sh
+curl -X PATCH $GATEWAY/api/v1/config/mqtt \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":true,"broker_uri":"mqtts://broker.example.org:8883","username":"sms-gateway","password":"...","home_assistant_enabled":true,"default_recipient":"+491701234567"}'
+```
+
+Fields: `enabled`, `broker_uri`, `username`, `password`, `base_topic`, `home_assistant_enabled`, `discovery_prefix`, `default_recipient` and `ca_pem` (PEM of a private CA; leave it out for a broker with a public certificate). Passwords and CA contents are write-only; reads expose only whether those values are configured. The change applies immediately, without a restart.
 
 See [MQTT](mqtt.md) for the topic contract.
 

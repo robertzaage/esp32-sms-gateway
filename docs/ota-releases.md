@@ -40,7 +40,7 @@ The OTA endpoint uses the same bearer token as the rest of the REST API. It expe
 ```sh
 OTA=esp32-sms-gateway-vX.Y.Z-ota.bin
 TOKEN='...'
-GATEWAY='http://sms-gateway.local'
+GATEWAY='http://192.168.1.50'   # the gateway IP shown on the display
 SHA256="$(sha256sum "$OTA" | awk '{print $1}')"
 
 curl --fail-with-body \
@@ -106,3 +106,5 @@ git push origin v0.7.0-alpha.1
 ```
 
 Keep prerelease tags for builds that have passed CI but still need physical board/modem validation.
+
+Push release tags one at a time. GitHub does not start tag workflows when more than three tags arrive in a single push. To build a release for a tag that was pushed that way, run the **Release** workflow manually (`workflow_dispatch`) with the tag name.

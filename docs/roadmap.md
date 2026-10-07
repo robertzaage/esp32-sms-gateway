@@ -1,6 +1,6 @@
 # Project status and next steps
 
-The software has reached the point where CI is no longer the main unknown: the repository builds successfully with the pinned ESP-IDF toolchain and the host-side parser, SMS, persistence and policy tests pass. The next useful work is hardware validation and fault testing.
+The repository builds with the pinned ESP-IDF toolchain, the host-side parser, SMS, persistence and policy tests pass, and the core paths work on the reference hardware. The next useful work is fault and long-running testing.
 
 ## Already implemented
 
@@ -16,21 +16,32 @@ The current firmware includes:
 - authenticated OTA, release artifacts and ESP-IDF rollback confirmation;
 - GitHub CI that performs host tests and a complete ESP32-S3 firmware build.
 
+## Verified on hardware
+
+With an ESP32-S3-USB-OTG powered through `USB_DEV` and a Huawei E3372 (stick firmware 21.180.01.00.00, booting as `12d1:1f01`) on a German network, the following work:
+
+- setup portal, Wi-Fi join and the status display;
+- USB mode switch to `12d1:1506`, AT port, SIM and registration;
+- GSM-7 SMS send, receive and delivery reports;
+- OTA updates over the REST API;
+- MQTT over TLS (`mqtts://`, Let's Encrypt certificate) with a topic-restricted broker account.
+
 ## Hardware validation still needed
 
 Before calling a release stable, test the real board/modem combination for:
 
-- cold boot with the modem attached, including its true pre-switch USB identity;
+- cold boot with the modem attached;
 - repeated plug/unplug and USB error recovery;
 - SIM PIN, registration, roaming and signal/operator changes;
-- GSM-7, Unicode and multipart send/receive;
-- delivery reports and power loss during an ambiguous send;
+- Unicode and multipart send/receive;
+- power loss during an ambiguous send;
 - a full/pressured SMS journal;
 - Wi-Fi and MQTT outages followed by recovery/replay;
+- Home Assistant discovery, notify entity and restart buttons;
 - powered-hub operation and over-current behavior;
 - modem functional reset and, where available, real VBUS power cycling;
-- successful OTA, bad-image rejection and deliberate crash/reset rollback;
-- multi-day unattended operation.
+- bad-image rejection and deliberate crash/reset rollback;
+- multi-day unattended operation, including the internal RAM low point (`gateway.heap.minimum_free`).
 
 ## Likely follow-up work
 

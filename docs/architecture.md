@@ -66,4 +66,8 @@ A new image remains pending after its first boot. It is marked valid only after 
 
 ## Flash layout
 
-The 8 MB flash is split between normal NVS/configuration, two 3 MB OTA application slots and a dedicated storage partition for the SMS journal. See `partitions.csv` for the exact layout.
+The 8 MB flash is split between normal NVS/configuration, a 56 KB core dump partition for crash diagnostics, two 3 MB OTA application slots and a dedicated storage partition for the SMS journal. See `partitions.csv` for the exact layout.
+
+## Memory
+
+The ESP32-S3-USB-OTG has no PSRAM, so internal RAM is the tightest resource. The display draws in 24-line strips instead of keeping a full frame buffer, mbedTLS allocates its record buffers only while needed, and Wi-Fi code runs from flash rather than IRAM. Free RAM is reported in `/api/v1/status` (`gateway.heap`); check it after adding buffers, queues or tasks.

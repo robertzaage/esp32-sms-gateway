@@ -63,13 +63,15 @@ Use the board's programming/serial port, not a `/dev/ttyUSB*` node created by a 
 
 ## What should happen at boot
 
-The firmware routes the ESP32-S3 USB peripheral to the host connector, enables the configured VBUS path, starts the USB Host stack and waits for the modem.
+The firmware sets `USB_SEL` (GPIO18) high to route the ESP32-S3 USB peripheral to the `USB_HOST` socket, enables the current limiter and the configured VBUS path, starts the USB Host stack and waits for the modem.
 
 Huawei modems can appear first as a storage device. The gateway recognizes common pre-switch IDs such as `12d1:1f01` (E3372), `12d1:1446` and `12d1:14fe`, sends the Huawei mode-switch command, and waits for the modem personality to re-enumerate. An additional source PID can be configured for hardware that uses a different cold-boot ID.
 
 For the known `12d1:1506` descriptor, interface 1 is normally the best AT candidate. Firmware does not depend on that number: it ranks compatible interfaces from the live USB descriptor and keeps the first one that answers `AT` with `OK`.
 
-A healthy boot should progress from USB discovery to an AT-ready modem, then SIM and cellular registration.
+A healthy boot should progress from USB discovery to an AT-ready modem, then SIM and cellular registration. `modem.state` in `/api/v1/status` then reads `ready`, and `sms.pdu_mode_configured` is `true` once SMS handling is set up.
+
+Huawei modems send unsolicited results such as `+CMTI` (new SMS) and `+CDS` (delivery report) to their PC UI port by default. The gateway talks to the modem port, so it sets `AT^PORTSEL=1` during initialization and additionally polls the modem inbox every 60 seconds.
 
 ## Powered hubs
 
@@ -79,7 +81,7 @@ A self-powered hub may still require upstream VBUS for attach/session detection,
 
 ## Over-current behavior
 
-The board's over-current input is monitored while the gateway is running. When firmware owns host VBUS and a persistent fault is detected, it cuts host power, waits for the configured recovery interval, and then attempts to restore it. Counters are visible in `/api/v1/status`.
+The board's over-current input (GPIO21, the MIC2005A `FAULT/` output, low = fault) is polled every 100 ms. Faults shorter than about 300 ms, such as the inrush when a modem is plugged in, are ignored. When firmware owns host VBUS and a fault persists, it cuts host power and restores it 5 seconds after the fault has cleared. `modem.usb_overcurrent`, `usb_power_cutoff_latched` and the event counters in `/api/v1/status` show the state.
 
 Repeated over-current recovery is a sign to fix the power topology, not a normal operating condition.
 
@@ -90,7 +92,13 @@ If the modem never appears:
 - confirm the modem LED/power state;
 - verify the `USB_DEV` 5 V input;
 - try a powered USB 2.0 hub;
-- check the serial log for over-current messages or an unsupported Huawei cold-boot PID.
+- check `/api/v1/status` (`modem.usb_overcurrent`, `usb_power_cutoff_latched`, `usb_mode_switch_*`) and the serial log for over-current messages or an unsupported Huawei cold-boot PID.
+
+If the modem is `ready` but SMS do not go out or come in, check `sms.pdu_mode_configured` and `sms.setup_failed` in `/api/v1/status`. `POST /api/v1/modem/at` (see [Networking and REST API](networking-api.md#modem-at-diagnostics)) runs single AT commands such as `AT+CPMS?`, `AT+CNMI?` or `AT^PORTSEL?` without a serial cable.
+
+## Memory
+
+The board has no PSRAM, so Wi-Fi, TLS, the USB host stack, the display and the modem services share about 340 KB of internal RAM. `gateway.heap` in `/api/v1/status` reports free RAM, the largest free block and the lowest free value since boot. With an open `mqtts://` session, expect roughly 60 KB free and a largest block around 30 KB. A low point near zero or a largest block under about 16 KB means TLS connections can fail.
 
 If USB connects but no AT port is found, capture the complete USB descriptor and serial log. The modem may expose a different composite layout.
 

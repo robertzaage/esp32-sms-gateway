@@ -1,8 +1,10 @@
 # MQTT
 
-MQTT is optional and disabled until configured through `PATCH /api/v1/config/mqtt`.
+MQTT is optional and disabled until configured, either in the setup portal or through `PATCH /api/v1/config/mqtt` (see [Networking and REST API](networking-api.md#mqtt-configuration)).
 
-The gateway supports `mqtt://` and `mqtts://`. Broker credentials are configured separately from the URI. With `mqtts://`, the broker certificate is verified with either a configured private CA or Espressif's certificate bundle.
+The gateway supports `mqtt://` and `mqtts://`. Broker credentials are configured separately from the URI. With `mqtts://`, the broker certificate is verified with either a configured private CA or Espressif's certificate bundle, so a broker with a public certificate (for example Let's Encrypt) needs no CA file. The URI host must match the certificate name.
+
+The broker account needs read/write access to the topic root, write access to `<discovery_prefix>/device/<device_id>/config` and read access to `<discovery_prefix>/status`; see [Security](security.md#mqtt) for a Mosquitto ACL.
 
 The default topic root is:
 

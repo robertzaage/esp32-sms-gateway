@@ -6,7 +6,7 @@ ESP32 SMS Gateway turns an **Espressif ESP32-S3-USB-OTG** board and a USB cellul
 
 The first supported modem family is Huawei. The reference modem is a Huawei E3372 with "stick" (serial modem) firmware: it boots as USB storage `12d1:1f01` and is switched to its AT-capable modem mode `12d1:1506`. HiLink firmware (`12d1:14dc`) has no AT port and is not supported.
 
-The firmware builds successfully in GitHub Actions with ESP-IDF 6.0.2. Physical modem testing is still important before relying on it for unattended or safety-critical use.
+The firmware builds in GitHub Actions with ESP-IDF 6.0.2. On the reference hardware (E3372 firmware 21.180.01.00.00, German network) the setup portal, Wi-Fi, USB mode switch, SMS send and receive, delivery reports, OTA updates and MQTT over TLS have been verified. Long-running and fault tests are still open; see the [roadmap](docs/roadmap.md) before relying on it for unattended or safety-critical use.
 
 ## What it does
 
@@ -24,7 +24,7 @@ The firmware builds successfully in GitHub Actions with ESP-IDF 6.0.2. Physical 
 
 The reference board is the **ESP32-S3-USB-OTG** with 8 MB flash.
 
-Connect the board's debug/programming USB port to your computer. The Type-A host socket also needs a usable 5 V host supply; with the default board configuration this comes from the `USB_DEV` input. See [hardware bring-up](docs/hardware-bringup.md) before attaching the modem.
+Power the board with 5 V on the `USB_DEV` plug; with the default configuration that input also feeds the Type-A `USB_HOST` socket the modem plugs into. The Micro-USB port is only needed for flashing and the serial log. See [hardware bring-up](docs/hardware-bringup.md) before attaching the modem.
 
 Cellular modems can draw short current bursts above the board's 500 mA host limit. If the modem resets or disappears during registration or transmission, use a good powered USB 2.0 hub. Keep upstream VBUS enabled unless you have tested your hub with a different topology. When a hub supplies downstream power, the ESP32 usually cannot perform a true modem power cycle.
 
@@ -61,21 +61,25 @@ The setup password is generated once per device and stays the same across reboot
 
 The display shows Wi-Fi, MQTT and modem state, signal strength and the last received SMS. It switches off after 60 seconds without new content and lights up again when something changes, an SMS arrives, or any button is pressed. The image moves by a few pixels on every wake to spread pixel wear. Timeouts and the SMS preview are configurable under `Gateway display` in `idf.py menuconfig`.
 
+Once connected, the display shows the gateway's IP address. The gateway also registers the DHCP hostname `sms-gateway-xxxxxx` (the same suffix as the setup Wi-Fi name), which many routers resolve; there is no mDNS (`.local`) name.
+
 Check the gateway:
 
 ```sh
-curl http://sms-gateway.local/api/v1/health
+GATEWAY=http://192.168.1.50   # the IP from the display
+
+curl $GATEWAY/api/v1/health
 
 curl \
   -H "Authorization: Bearer $TOKEN" \
-  http://sms-gateway.local/api/v1/status
+  $GATEWAY/api/v1/status
 ```
 
 Send a message:
 
 ```sh
 curl --fail-with-body \
-  -X POST http://sms-gateway.local/api/v1/messages \
+  -X POST $GATEWAY/api/v1/messages \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: example-send-0001' \
@@ -86,7 +90,7 @@ The API returns after the message is durably queued; cellular delivery continues
 
 ## MQTT and Home Assistant
 
-MQTT is optional and disabled until configured. It supports `mqtt://` and CA-verified `mqtts://`, retained availability/status, structured SMS commands, incoming SMS events and Home Assistant device discovery.
+MQTT is optional and disabled until configured in the setup portal or through the REST API. It supports `mqtt://` and CA-verified `mqtts://` (brokers with a public certificate such as Let's Encrypt need no CA file), retained availability/status, structured SMS commands, incoming SMS events and Home Assistant device discovery.
 
 Start with [MQTT](docs/mqtt.md) and [Home Assistant](homeassistant/README.md).
 
@@ -112,8 +116,8 @@ GitHub Actions also performs a full ESP-IDF target build and assembles flashable
 
 ## Documentation
 
-- [Hardware bring-up](docs/hardware-bringup.md) — wiring, power, first modem test and troubleshooting.
-- [Networking and REST API](docs/networking-api.md) — provisioning, authentication and API examples.
+- [Hardware bring-up](docs/hardware-bringup.md) — wiring, power, serial console, crash diagnostics and troubleshooting.
+- [Networking and REST API](docs/networking-api.md) — setup portal, authentication, API examples and modem AT diagnostics.
 - [MQTT](docs/mqtt.md) — topics, commands, delivery behavior and Home Assistant discovery.
 - [OTA and releases](docs/ota-releases.md) — factory flashing, OTA updates and rollback.
 - [SMS behavior](docs/sms-subsystem.md) — encoding, persistence, multipart messages and retry semantics.
