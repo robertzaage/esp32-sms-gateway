@@ -1,0 +1,21 @@
+# Example dashboard card. In a dashboard: Add card -> Manual, paste this.
+# Adjust the entity IDs if you renamed the device or entities.
+type: entities
+title: SMS Gateway
+entities:
+  - entity: binary_sensor.sms_gateway_registered
+    name: Registered
+  - entity: sensor.sms_gateway_operator
+  - entity: sensor.sms_gateway_signal_strength
+  - entity: sensor.sms_gateway_sms_queue
+  - entity: event.sms_gateway_incoming_sms
+    name: Last SMS
+  - type: section
+    label: Health
+  - entity: sensor.sms_gateway_modem_state
+  - entity: sensor.sms_gateway_uptime
+  - entity: sensor.sms_gateway_free_memory
+  - entity: sensor.sms_gateway_free_memory_low_point
+  - entity: sensor.sms_gateway_last_start
+  - entity: button.sms_gateway_restart_modem
+  - entity: button.sms_gateway_restart_gateway

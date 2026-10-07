@@ -98,7 +98,7 @@ If the modem is `ready` but SMS do not go out or come in, check `sms.pdu_mode_co
 
 ## Memory
 
-The board has no PSRAM, so Wi-Fi, TLS, the USB host stack, the display and the modem services share about 340 KB of internal RAM. `gateway.heap` in `/api/v1/status` reports free RAM, the largest free block and the lowest free value since boot. With an open `mqtts://` session, expect roughly 60 KB free and a largest block around 30 KB. A low point near zero or a largest block under about 16 KB means TLS connections can fail.
+The board has no PSRAM, so Wi-Fi, TLS, the USB host stack, the display and the modem services share about 340 KB of internal RAM. `gateway.heap` in `/api/v1/status` reports free RAM, the largest free block and the lowest free value since boot. With an open `mqtts://` session, expect roughly 60 KB free and a largest block around 30 KB. The low point after a few hours, including SMS traffic, should stay above about 10 KB. A low point near zero or a largest block under about 16 KB means TLS connections or SMS processing can fail.
 
 If USB connects but no AT port is found, capture the complete USB descriptor and serial log. The modem may expose a different composite layout.
 

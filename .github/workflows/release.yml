@@ -77,8 +77,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Release notes come from CHANGELOG.md; fall back to GitHub's
+          # generated notes when the version has no section.
+          notes=(--generate-notes)
+          if python scripts/changelog_section.py "$RELEASE_TAG" > release-notes.md; then
+            notes=(--notes-file release-notes.md)
+          fi
+          prerelease=()
+          [[ "$RELEASE_TAG" == *-* ]] && prerelease=(--prerelease)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/* --clobber
+            if [[ "${notes[0]}" == --notes-file ]]; then gh release edit "$RELEASE_TAG" "${notes[@]}"; fi
           else
-            gh release create "$RELEASE_TAG" dist/* --generate-notes --verify-tag
+            gh release create "$RELEASE_TAG" dist/* "${notes[@]}" "${prerelease[@]}" --verify-tag
           fi

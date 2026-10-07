@@ -499,3 +499,25 @@ class OpenApiMatchesCodeTests(unittest.TestCase):
         keys |= set(re.findall(r'add_json_string\(\s*\w+,\s*"([a-z0-9_]+)"', body))
         missing = sorted(k for k in keys if not re.search(rf"^\s+{k}:", schema, re.M))
         self.assertEqual(missing, [], "MQTT config fields missing from MqttConfig in api/openapi.yaml")
+
+
+class ChangelogTests(unittest.TestCase):
+    def test_release_notes_come_from_changelog(self):
+        result = subprocess.run(
+            ["python3", str(ROOT / "scripts" / "changelog_section.py"), "v0.7.0-alpha.14"],
+            check=True, capture_output=True, text=True,
+        )
+        self.assertIn("Home Assistant diagnostics", result.stdout)
+        self.assertNotIn("## 0.7.0-alpha.13", result.stdout)
+        missing = subprocess.run(
+            ["python3", str(ROOT / "scripts" / "changelog_section.py"), "9.9.9"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(missing.returncode, 1)
+
+    def test_every_tag_style_heading_is_well_formed(self):
+        import re
+        text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if line.startswith("## ") and line != "## Unreleased":
+                self.assertRegex(line, r"^## \d+\.\d+\.\d+(-[0-9A-Za-z.]+)?( to \d+\.\d+\.\d+(-[0-9A-Za-z.]+)?)? - \d{4}-\d{2}-\d{2}$")

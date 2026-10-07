@@ -1,0 +1,18 @@
+# Example automation: forward every incoming SMS as a phone notification.
+# Replace notify.mobile_app_your_phone with your companion app notifier, and
+# adjust the event entity ID if you renamed the device or entity.
+automation:
+  - alias: Forward incoming SMS to my phone
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: event.sms_gateway_incoming_sms
+        not_from: unavailable
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.to_state.attributes.event_type == 'received' }}"
+    actions:
+      - action: notify.mobile_app_your_phone
+        data:
+          title: "SMS from {{ trigger.to_state.attributes.from }}"
+          message: "{{ trigger.to_state.attributes.text }}"

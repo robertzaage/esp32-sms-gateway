@@ -1,0 +1,19 @@
+# Example script: send a text to the gateway's default recipient through the
+# discovered notify entity. The notify path uses QoS 0 and has no request ID;
+# use send_sms.yaml for alarms or other recipients.
+script:
+  sms_to_default_recipient:
+    alias: SMS to default recipient
+    fields:
+      message:
+        name: Message
+        required: true
+        selector:
+          text:
+            multiline: true
+    sequence:
+      - action: notify.send_message
+        target:
+          entity_id: notify.sms_gateway_sms
+        data:
+          message: "{{ message }}"

@@ -8,6 +8,14 @@ The first supported modem family is Huawei. The reference modem is a Huawei E337
 
 The firmware builds in GitHub Actions with ESP-IDF 6.0.2. On the reference hardware (E3372 firmware 21.180.01.00.00, German network) the setup portal, Wi-Fi, USB mode switch, SMS send and receive, delivery reports, OTA updates and MQTT over TLS have been verified. Long-running and fault tests are still open; see the [roadmap](docs/roadmap.md) before relying on it for unattended or safety-critical use.
 
+## Quick start
+
+1. Flash the `*-factory.bin` from the latest release at `0x0` through the Micro-USB port ([details](#flash-a-release)).
+2. Plug the modem (Huawei E3372, stick firmware) into the Type-A `USB_HOST` socket and power the board with 5 V on `USB_DEV`.
+3. Join the Wi-Fi shown on the display (`SMS-Gateway-XXXXXX`) with the password shown there. The setup page opens; pick your Wi-Fi, optionally enter your MQTT broker, and save. Copy the API token it shows, because it is shown only once.
+4. Once the gateway is on your network, the display shows its IP address. `curl -H "Authorization: Bearer $TOKEN" http://<IP>/api/v1/status` should report `"modem": {"state": "ready", ...}` after a minute.
+5. Send a test SMS with the [example below](#first-boot), or from Home Assistant once MQTT is set up ([Home Assistant](homeassistant/README.md)).
+
 ## What it does
 
 - Sends and receives GSM-7 and Unicode text SMS, including multipart messages.

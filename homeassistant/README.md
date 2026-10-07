@@ -13,7 +13,9 @@ The memory and last-start sensors are meant for long-running checks: a falling l
 
 ## Receive SMS
 
-Incoming messages appear through the discovered event entity. Event data includes the sender, text, durable message ID and service-center timestamp.
+Incoming messages appear through the discovered event entity (`event.sms_gateway_incoming_sms` unless renamed). Its attributes are `event_type` (`received`), `from`, `text`, `id` (durable message ID) and `received_at` (service-center timestamp).
+
+[`forward_sms.yaml`](forward_sms.yaml) is an automation that forwards each incoming SMS as a phone notification.
 
 SMS content is private. Home Assistant Recorder, automation traces or broker logs may keep event attributes after the gateway has published them. Exclude the entity or design your automation accordingly if you do not want SMS content stored in Home Assistant.
 
@@ -22,6 +24,12 @@ SMS content is private. Home Assistant Recorder, automation traces or broker log
 If `default_recipient` is configured in the gateway's MQTT settings, discovery creates a native MQTT notify entity. This is convenient for ordinary notifications to one number.
 
 The notify path uses QoS 0 because Home Assistant's generic notify command does not supply an application idempotency key. It is not the preferred path for critical alerts where duplicate/lost-command behavior matters.
+
+[`notify_example.yaml`](notify_example.yaml) is a script that sends through `notify.sms_gateway_sms`. Set or change the number in the setup portal or with `PATCH /api/v1/config/mqtt` (`default_recipient`).
+
+## Dashboard
+
+[`dashboard_card.yaml`](dashboard_card.yaml) is an entities card with registration, signal, the last SMS and the health sensors.
 
 ## Send to arbitrary recipients
 
