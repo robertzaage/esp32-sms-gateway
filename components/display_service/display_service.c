@@ -44,6 +44,12 @@
 #define DISPLAY_POLL_MS 50
 #define DISPLAY_REFRESH_MS 1000
 #define DISPLAY_SHIFT_MAX 4
+/*
+ * The screen is drawn in horizontal strips of BAND_H lines through one small
+ * DMA buffer (11.5 KB). A full 240x240 frame would need 115 KB of internal RAM,
+ * which leaves too little for Wi-Fi to start.
+ */
+#define BAND_H 24
 #define BUTTON_LONG_PRESS_MS (CONFIG_GATEWAY_DISPLAY_PORTAL_HOLD_SECONDS * 1000)
 
 /* RGB565, byte-swapped because the SPI panel expects big-endian pixels. */
@@ -96,7 +102,8 @@ typedef struct {
 } view_minor_t;
 
 static esp_lcd_panel_handle_t s_panel;
-static uint16_t *s_frame;
+static uint16_t *s_band;
+static int s_band_y;
 static SemaphoreHandle_t s_flush_done;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static network_service_snapshot_t s_net;
@@ -142,9 +149,9 @@ static void fill(int x, int y, int w, int h, uint16_t color)
     x += s_shift_x;
     y += s_shift_y;
     for (int row = y; row < y + h; ++row) {
-        if (row < 0 || row >= LCD_H) continue;
+        if (row < s_band_y || row >= s_band_y + BAND_H) continue;
         for (int col = x; col < x + w; ++col) {
-            if (col >= 0 && col < LCD_W) s_frame[row * LCD_W + col] = color;
+            if (col >= 0 && col < LCD_W) s_band[(row - s_band_y) * LCD_W + col] = color;
         }
     }
 }
@@ -325,25 +332,29 @@ static void draw_status(const view_significant_t *v, const view_minor_t *m)
 #endif
 }
 
-static void flush(void)
+static void flush_band(void)
 {
     (void)xSemaphoreTake(s_flush_done, 0);
-    const esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, 0, 0, LCD_W, LCD_H, s_frame);
+    const esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, 0, s_band_y, LCD_W, s_band_y + BAND_H, s_band);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "LCD refresh failed: %s", esp_err_to_name(err));
         return;
     }
-    /* Do not touch the frame buffer while DMA still reads it. */
+    /* Do not touch the strip buffer while DMA still reads it. */
     (void)xSemaphoreTake(s_flush_done, pdMS_TO_TICKS(500));
 }
 
+/* Draws the page strip by strip; v == NULL clears the screen. */
 static void render(const view_significant_t *v, const view_minor_t *m)
 {
-    memset(s_frame, 0, LCD_W * LCD_H * sizeof(*s_frame));
-    if (v->page == PAGE_CRASH) draw_crash();
-    else if (v->page == PAGE_SETUP) draw_setup(v);
-    else draw_status(v, m);
-    flush();
+    for (s_band_y = 0; s_band_y < LCD_H; s_band_y += BAND_H) {
+        memset(s_band, 0, LCD_W * BAND_H * sizeof(*s_band));
+        if (v == NULL) { /* blank */ }
+        else if (v->page == PAGE_CRASH) draw_crash();
+        else if (v->page == PAGE_SETUP) draw_setup(v);
+        else draw_status(v, m);
+        flush_band();
+    }
 }
 
 static void panel_power(bool on)
@@ -534,16 +545,15 @@ static bool flush_done_cb(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_d
 esp_err_t display_service_init(void)
 {
     s_flush_done = xSemaphoreCreateBinary();
-    s_frame = heap_caps_malloc(LCD_W * LCD_H * sizeof(*s_frame), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    if (s_frame == NULL || s_flush_done == NULL) return ESP_ERR_NO_MEM;
-    memset(s_frame, 0, LCD_W * LCD_H * sizeof(*s_frame));
+    s_band = heap_caps_malloc(LCD_W * BAND_H * sizeof(*s_band), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if (s_band == NULL || s_flush_done == NULL) return ESP_ERR_NO_MEM;
 
     /* Keep the backlight off until the first frame is in the panel. */
     gpio_config_t bl = {.pin_bit_mask = 1ULL << LCD_BL, .mode = GPIO_MODE_OUTPUT};
     ESP_RETURN_ON_ERROR(gpio_config(&bl), TAG, "LCD backlight");
     ESP_RETURN_ON_ERROR(gpio_set_level(LCD_BL, 0), TAG, "LCD backlight off");
 
-    const spi_bus_config_t bus = {.sclk_io_num = LCD_CLK, .mosi_io_num = LCD_MOSI, .miso_io_num = GPIO_NUM_NC, .quadwp_io_num = GPIO_NUM_NC, .quadhd_io_num = GPIO_NUM_NC, .max_transfer_sz = LCD_W * LCD_H * 2};
+    const spi_bus_config_t bus = {.sclk_io_num = LCD_CLK, .mosi_io_num = LCD_MOSI, .miso_io_num = GPIO_NUM_NC, .quadwp_io_num = GPIO_NUM_NC, .quadhd_io_num = GPIO_NUM_NC, .max_transfer_sz = LCD_W * BAND_H * 2};
     ESP_RETURN_ON_ERROR(spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO), TAG, "LCD SPI");
     const esp_lcd_panel_io_spi_config_t io_cfg = {
         .dc_gpio_num = LCD_DC, .cs_gpio_num = LCD_CS, .pclk_hz = 40 * 1000 * 1000,
@@ -557,7 +567,7 @@ esp_err_t display_service_init(void)
     ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(s_panel), TAG, "LCD reset");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(s_panel), TAG, "LCD init");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_invert_color(s_panel, true), TAG, "LCD invert");
-    flush();
+    render(NULL, NULL);
     ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(s_panel, true), TAG, "LCD on");
     ESP_RETURN_ON_ERROR(gpio_set_level(LCD_BL, 1), TAG, "LCD backlight on");
 

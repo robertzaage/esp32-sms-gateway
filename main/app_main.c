@@ -22,6 +22,12 @@
 #include "gateway_diag.h"
 
 static const char *TAG = "gateway";
+
+/* Like ESP_ERROR_CHECK, but the failing step and error survive the reboot. */
+#define BOOT_STEP(expr) do { \
+    const esp_err_t boot_err_ = (expr); \
+    if (boot_err_ != ESP_OK) gateway_diag_boot_step_failed(#expr, boot_err_); \
+} while (0)
 static TaskHandle_t s_supervisor;
 static SemaphoreHandle_t s_api_lock;
 
@@ -85,19 +91,19 @@ void app_main(void)
     ESP_ERROR_CHECK(init_nvs());
     ESP_ERROR_CHECK(gateway_diag_init());
     const gateway_safe_mode_t safe_mode = gateway_diag_safe_mode();
-    ESP_ERROR_CHECK(gateway_board_init());
-    ESP_ERROR_CHECK(gateway_ota_service_init());
+    BOOT_STEP(gateway_board_init());
+    BOOT_STEP(gateway_ota_service_init());
 
     if (gateway_board_usb_overcurrent()) {
         ESP_LOGW(TAG, "USB host over-current is asserted at boot");
     }
 
     bool token_generated = false;
-    ESP_ERROR_CHECK(gateway_security_init(NULL, 0, &token_generated));
+    BOOT_STEP(gateway_security_init(NULL, 0, &token_generated));
     (void)token_generated;
-    ESP_ERROR_CHECK(gateway_idempotency_init());
+    BOOT_STEP(gateway_idempotency_init());
     /* Settings first: the setup portal reads and writes them. */
-    ESP_ERROR_CHECK(gateway_settings_init(network_service_device_id()));
+    BOOT_STEP(gateway_settings_init(network_service_device_id()));
     /* Display and modem are not essential for reaching the setup portal and the
      * API: log failures instead of rebooting into the same failure again. */
     if (safe_mode < GATEWAY_SAFE_MODE_NO_MODEM_NO_DISPLAY) {
@@ -110,21 +116,23 @@ void app_main(void)
     s_api_lock = xSemaphoreCreateMutex();
     if (s_api_lock == NULL ||
         xTaskCreate(supervisor_task, "supervisor", 4096, NULL, 4, &s_supervisor) != pdPASS) {
-        ESP_ERROR_CHECK(ESP_ERR_NO_MEM);
+        gateway_diag_boot_step_failed("supervisor task", ESP_ERR_NO_MEM);
     }
     const network_service_config_t net_cfg = {
         .on_change = network_changed,
         .before_portal_start = before_portal_start,
     };
-    ESP_ERROR_CHECK(network_service_init(&net_cfg));
-    ESP_ERROR_CHECK(mqtt_service_init());
+    gateway_diag_log_heap("before Wi-Fi");
+    BOOT_STEP(network_service_init(&net_cfg));
+    BOOT_STEP(mqtt_service_init());
 
     /*
      * All critical services reached their startup boundary. A newly booted OTA
      * image remains pending for an additional stability window before it is
      * marked valid; any reset before then triggers bootloader rollback.
      */
-    ESP_ERROR_CHECK(gateway_ota_mark_services_ready());
+    BOOT_STEP(gateway_ota_mark_services_ready());
+    gateway_diag_log_heap("after startup");
 
     ESP_LOGI(TAG, "USB modem discovery started; connect the Huawei modem to the Type-A host port");
 }

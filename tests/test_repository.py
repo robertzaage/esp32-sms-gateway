@@ -269,6 +269,11 @@ class RepositoryContractTests(unittest.TestCase):
         app = (ROOT / "main" / "app_main.c").read_text(encoding="utf-8")
         self.assertIn("gateway_diag_init()", app)
         self.assertNotIn("ESP_ERROR_CHECK(display_service_init())", app)
+        self.assertIn("BOOT_STEP(network_service_init(&net_cfg))", app)
+        display = (ROOT / "components" / "display_service" / "display_service.c").read_text(encoding="utf-8")
+        # A full-frame buffer (115 KB) starved Wi-Fi of internal RAM; draw in strips.
+        self.assertIn("LCD_W * BAND_H * sizeof(*s_band)", display)
+        self.assertNotIn("LCD_W * LCD_H * sizeof", display)
 
     def test_openapi_exposes_redacted_mqtt_config(self):
         text = (ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8")

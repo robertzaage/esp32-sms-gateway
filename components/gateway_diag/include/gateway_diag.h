@@ -39,6 +39,16 @@ const char *gateway_diag_last_crash(bool *fresh);
 /** Forget the stored crash summary. */
 void gateway_diag_clear_crash(void);
 
+/**
+ * Record that a boot step failed (name, error and free heap) so the next boot
+ * shows "boot: <step> failed: ESP_ERR_NO_MEM ..." instead of only a
+ * backtrace, then abort.
+ */
+void gateway_diag_boot_step_failed(const char *step, esp_err_t err) __attribute__((noreturn));
+
+/** Log free internal heap with a label (boot memory budget). */
+void gateway_diag_log_heap(const char *label);
+
 #ifdef __cplusplus
 }
 #endif

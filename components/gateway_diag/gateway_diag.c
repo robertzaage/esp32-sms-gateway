@@ -5,6 +5,7 @@
 #include <string.h>
 #include "esp_attr.h"
 #include "esp_core_dump.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -12,6 +13,7 @@
 
 #define DIAG_NAMESPACE "gw_diag"
 #define DIAG_CRASH_KEY "last_crash"
+#define DIAG_FATAL_KEY "boot_fatal"
 #define DIAG_RTC_MAGIC 0x53474449U /* "SGDI" */
 #define DIAG_STABLE_AFTER_US (60LL * 1000 * 1000)
 #define DIAG_SAFE_MODE_CRASHES 3U
@@ -118,6 +120,45 @@ static bool summarize_core_dump(void)
 #endif
 }
 
+static bool take_boot_fatal(char *out, size_t size)
+{
+    nvs_handle_t nvs = 0;
+    if (nvs_open(DIAG_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return false;
+    size_t len = size;
+    const bool found = nvs_get_str(nvs, DIAG_FATAL_KEY, out, &len) == ESP_OK;
+    if (found) {
+        (void)nvs_erase_key(nvs, DIAG_FATAL_KEY);
+        (void)nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return found;
+}
+
+void gateway_diag_boot_step_failed(const char *step, esp_err_t err)
+{
+    char text[GATEWAY_DIAG_CRASH_TEXT_MAX];
+    snprintf(text, sizeof(text), "boot: %s failed: %s (0x%x), free heap %u, largest block %u",
+             step, esp_err_to_name(err), (unsigned)err,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    ESP_LOGE(TAG, "%s", text);
+    nvs_handle_t nvs = 0;
+    if (nvs_open(DIAG_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+        (void)nvs_set_str(nvs, DIAG_FATAL_KEY, text);
+        (void)nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    abort();
+}
+
+void gateway_diag_log_heap(const char *label)
+{
+    ESP_LOGI(TAG, "heap %s: internal free %u, largest block %u, minimum ever %u", label,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+}
+
 static void stable_cb(void *arg)
 {
     (void)arg;
@@ -137,7 +178,16 @@ esp_err_t gateway_diag_init(void)
     s_crashes_before_boot = s_rtc_crashes;
 
     load_crash_text();
-    if (summarize_core_dump()) {
+    char fatal[GATEWAY_DIAG_CRASH_TEXT_MAX] = {0};
+    if (take_boot_fatal(fatal, sizeof(fatal))) {
+        /* A failed boot step explains the abort better than its backtrace. */
+        snprintf(s_last_crash, sizeof(s_last_crash), "%s", fatal);
+        s_crash_fresh = true;
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+        if (esp_core_dump_image_check() == ESP_OK) (void)esp_core_dump_image_erase();
+#endif
+        store_crash_text();
+    } else if (summarize_core_dump()) {
         s_crash_fresh = reason_is_abnormal(s_reason);
         store_crash_text();
     } else if (s_reason == ESP_RST_BROWNOUT || s_reason == ESP_RST_USB || s_reason == ESP_RST_TASK_WDT ||
