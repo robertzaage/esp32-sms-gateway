@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include "api_common.h"
 #include "api_idempotency.h"
 #include "cJSON.h"
@@ -282,6 +283,8 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddBoolToObject(s, "modem_ready", sms.modem_ready);
     cJSON_AddBoolToObject(s, "pdu_mode_configured", sms.pdu_mode_configured);
     cJSON_AddNumberToObject(s, "setup_attempts", sms.setup_attempts);
+    cJSON_AddNumberToObject(s, "inbox_scans", sms.inbox_scans);
+    cJSON_AddNumberToObject(s, "inbox_scan_failures", sms.inbox_scan_failures);
     if (sms.setup_failed_command != NULL) {
         cJSON *failed = cJSON_AddObjectToObject(s, "setup_failed");
         cJSON_AddStringToObject(failed, "command", sms.setup_failed_command);
@@ -878,6 +881,100 @@ static esp_err_t modem_restart_handler(httpd_req_t *req)
     return httpd_resp_send(req, NULL, 0) == ESP_OK ? ESP_OK : ESP_FAIL;
 }
 
+static const char *at_result_name(at_result_t result)
+{
+    switch (result) {
+    case AT_RESULT_OK: return "ok";
+    case AT_RESULT_ERROR: return "error";
+    case AT_RESULT_CME_ERROR: return "cme_error";
+    case AT_RESULT_CMS_ERROR: return "cms_error";
+    case AT_RESULT_TIMEOUT: return "timeout";
+    case AT_RESULT_CANCELED: return "canceled";
+    case AT_RESULT_TRANSPORT_UNAVAILABLE: return "transport_unavailable";
+    case AT_RESULT_TRANSPORT_ERROR: return "transport_error";
+    case AT_RESULT_RX_OVERFLOW: return "rx_overflow";
+    case AT_RESULT_PROTOCOL_ERROR: return "protocol_error";
+    default: return "unknown";
+    }
+}
+
+/*
+ * Diagnostic AT passthrough for hardware bring-up. Commands that wait for a
+ * '>' prompt (SMS submit/write) are refused; use the messages API instead.
+ */
+static esp_err_t modem_at_handler(httpd_req_t *req)
+{
+    if (!authorized(req) || !request_allowed(req, false)) return ESP_OK;
+    char *body = NULL;
+    if (read_body(req, &body) != ESP_OK) return problem(req, 400, "urn:sms-gateway:invalid-body", "Bad Request", NULL);
+    cJSON *json = cJSON_Parse(body);
+    static const char *const allowed[] = {"command", "timeout_ms"};
+    const bool valid_object = json != NULL && json_has_only_fields(json, allowed, sizeof(allowed) / sizeof(allowed[0]));
+    const cJSON *command = valid_object ? cJSON_GetObjectItemCaseSensitive(json, "command") : NULL;
+    const cJSON *timeout = valid_object ? cJSON_GetObjectItemCaseSensitive(json, "timeout_ms") : NULL;
+    char cmd[AT_ENGINE_MAX_COMMAND_LENGTH] = {0};
+    bool valid = cJSON_IsString(command) && strlen(command->valuestring) < sizeof(cmd) &&
+                 strncasecmp(command->valuestring, "AT", 2) == 0 &&
+                 strpbrk(command->valuestring, "\r\n\x1a") == NULL &&
+                 (timeout == NULL || (cJSON_IsNumber(timeout) && timeout->valuedouble >= 100 && timeout->valuedouble <= 60000));
+    uint32_t timeout_ms = 10000;
+    if (valid) {
+        snprintf(cmd, sizeof(cmd), "%s", command->valuestring);
+        if (timeout != NULL) timeout_ms = (uint32_t)timeout->valuedouble;
+        valid = strncasecmp(cmd, "AT+CMGS", 7) != 0 && strncasecmp(cmd, "AT+CMGW", 7) != 0;
+    }
+    cJSON_Delete(json); free(body);
+    if (!valid) {
+        return problem(req, 400, "urn:sms-gateway:invalid-at-command", "Bad Request",
+                       "Expected {\"command\":\"AT...\"} without line breaks; AT+CMGS/AT+CMGW are not allowed");
+    }
+
+    /* Treat "+NAME:"/"^NAME:" lines of the command itself as its response. */
+    char prefix[40] = {0};
+    const char *prefixes[1] = {prefix};
+    if (cmd[2] == '+' || cmd[2] == '^') {
+        const size_t len = strcspn(cmd + 2, "=?");
+        if (len > 1 && len < sizeof(prefix) - 1) {
+            memcpy(prefix, cmd + 2, len);
+            prefix[len] = ':';
+        }
+    }
+    const at_request_t request = {
+        .command = cmd,
+        .expected_prefixes = prefixes,
+        .expected_prefix_count = prefix[0] != '\0' ? 1 : 0,
+        .timeout_ms = timeout_ms,
+        .max_attempts = 1,
+    };
+    at_response_t *response = calloc(1, sizeof(*response));
+    if (response == NULL) return problem(req, 503, "urn:sms-gateway:no-memory", "Service Unavailable", NULL);
+    const esp_err_t err = modem_core_at_execute(&request, response);
+    if (err != ESP_OK) {
+        free(response);
+        return problem(req, 503, "urn:sms-gateway:modem-unavailable", "Service Unavailable", esp_err_to_name(err));
+    }
+    cJSON *out = cJSON_CreateObject();
+    cJSON *lines = out != NULL ? cJSON_AddArrayToObject(out, "lines") : NULL;
+    if (lines != NULL) {
+        cJSON_AddStringToObject(out, "command", cmd);
+        cJSON_AddStringToObject(out, "result", at_result_name(response->result));
+        cJSON_AddNumberToObject(out, "error_code", response->error_code);
+        cJSON_AddStringToObject(out, "final", response->final_line);
+        cJSON_AddBoolToObject(out, "truncated", response->truncated);
+        for (size_t i = 0; i < response->line_count; ++i) {
+            cJSON_AddItemToArray(lines, cJSON_CreateString(at_response_line(response, i)));
+        }
+    }
+    free(response);
+    if (lines == NULL) {
+        cJSON_Delete(out);
+        return problem(req, 503, "urn:sms-gateway:no-memory", "Service Unavailable", NULL);
+    }
+    const esp_err_t sent = send_json(req, 200, out);
+    cJSON_Delete(out);
+    return sent;
+}
+
 static void reboot_task(void *arg)
 {
     (void)arg;
@@ -925,6 +1022,7 @@ esp_err_t api_server_init(void)
     register_uri("/api/v1/config/mqtt", HTTP_PATCH, mqtt_config_patch_handler);
     register_uri("/api/v1/modem/sim-pin", HTTP_POST, sim_pin_handler);
     register_uri("/api/v1/modem/restart", HTTP_POST, modem_restart_handler);
+    register_uri("/api/v1/modem/at", HTTP_POST, modem_at_handler);
     register_uri("/api/v1/system/idempotency/clear-pending", HTTP_POST, idempotency_clear_pending_handler);
     register_uri("/api/v1/system/firmware", HTTP_GET, firmware_get_handler);
     register_uri("/api/v1/system/firmware", HTTP_POST, firmware_post_handler);

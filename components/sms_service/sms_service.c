@@ -20,6 +20,8 @@
 #define SMS_SERVICE_AT_TIMEOUT_MS 10000
 #define SMS_SERVICE_CMGS_TIMEOUT_MS 60000
 #define SMS_SERVICE_SETUP_RETRY_MS 30000
+/* Safety net for missed new-message indications. */
+#define SMS_SERVICE_INBOX_POLL_MS 60000
 #define SMS_SERVICE_URC_MAX AT_ENGINE_MAX_URC_LENGTH
 
 typedef enum {
@@ -601,6 +603,7 @@ static esp_err_t read_modem_index(int index)
 static void scan_stored_messages(void)
 {
     static const char *const prefixes[] = {"+CMGL:"};
+    diag_increment(&s_service.diagnostics.inbox_scans);
     /*
      * at_response_t is deliberately bounded. Drain processed messages and repeat so
      * a modem inbox larger than AT_ENGINE_MAX_RESPONSE_LINES is still emptied.
@@ -609,6 +612,7 @@ static void scan_stored_messages(void)
         at_response_t response;
         if (!execute_simple("AT+CMGL=4", prefixes, 1, 30000, &response)) {
             ESP_LOGW(TAG, "stored-message scan failed at batch %u", (unsigned)batch);
+            diag_increment(&s_service.diagnostics.inbox_scan_failures);
             return;
         }
         int pending_index = -1;
@@ -681,6 +685,18 @@ static bool configure_pdu_mode(void)
     portEXIT_CRITICAL(&s_diag_lock);
     scan_stored_messages();
     return true;
+}
+
+static void poll_inbox_if_due(TickType_t *last_poll)
+{
+    bool configured;
+    portENTER_CRITICAL(&s_diag_lock);
+    configured = s_service.diagnostics.pdu_mode_configured;
+    portEXIT_CRITICAL(&s_diag_lock);
+    const TickType_t now = xTaskGetTickCount();
+    if (!configured || !modem_ready() || now - *last_poll < pdMS_TO_TICKS(SMS_SERVICE_INBOX_POLL_MS)) return;
+    *last_poll = now;
+    scan_stored_messages();
 }
 
 /* A failed setup (or a missed ready event) must not park the queue forever. */
@@ -895,6 +911,7 @@ static void service_task(void *arg)
     (void)arg;
     mark_interrupted_sends_uncertain();
     TickType_t last_setup = 0;
+    TickType_t last_poll = xTaskGetTickCount();
 
     for (;;) {
         service_event_t event;
@@ -906,6 +923,7 @@ static void service_task(void *arg)
                 s_service.diagnostics.pdu_mode_configured = false;
                 portEXIT_CRITICAL(&s_diag_lock);
                 last_setup = xTaskGetTickCount();
+                last_poll = last_setup;
                 if (!configure_pdu_mode()) {
                     ESP_LOGW(TAG, "SMS PDU-mode initialization failed");
                 }
@@ -927,6 +945,7 @@ static void service_task(void *arg)
         }
         retry_pdu_mode_if_needed(&last_setup);
         process_one_outbound();
+        poll_inbox_if_due(&last_poll);
     }
 }
 

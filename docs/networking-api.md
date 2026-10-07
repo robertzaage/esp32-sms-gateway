@@ -75,7 +75,20 @@ That explicit acknowledgement exists because the retry can produce a duplicate S
 
 ## SIM and recovery
 
-The API can submit a volatile SIM PIN, request modem recovery and reboot the gateway. There is intentionally no general-purpose raw AT endpoint.
+The API can submit a volatile SIM PIN, request modem recovery and reboot the gateway. Raw AT access is limited to the diagnostic endpoint below.
+
+## Modem AT diagnostics
+
+`POST /api/v1/modem/at` runs one AT command on the modem and returns its response lines, for hardware bring-up and troubleshooting:
+
+```sh
+curl -X POST http://sms-gateway.local/api/v1/modem/at \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"AT+CPMS?","timeout_ms":10000}'
+```
+
+The command must start with `AT` and must not contain line breaks. `timeout_ms` is optional (100–60000, default 10000). `AT+CMGS` and `AT+CMGW` are refused: send messages through `/api/v1/messages`. Commands run on the same serialized channel as the gateway itself, so changing modem settings (for example `AT+CMGF` or `AT+CNMI`) can break SMS handling until the modem is restarted.
 
 ## MQTT configuration
 

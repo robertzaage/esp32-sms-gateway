@@ -66,6 +66,8 @@ typedef struct {
     int setup_failed_result;
     int setup_failed_code;
     uint32_t setup_attempts;
+    uint32_t inbox_scans;
+    uint32_t inbox_scan_failures;
 } sms_service_diagnostics_t;
 
 esp_err_t sms_service_init(const sms_service_transport_t *transport,
