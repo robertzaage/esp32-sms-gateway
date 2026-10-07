@@ -259,8 +259,10 @@ class RepositoryContractTests(unittest.TestCase):
 
     def test_usb_routing_and_crash_diagnostics_contract(self):
         board = (ROOT / "components" / "board" / "gateway_board.c").read_text(encoding="utf-8")
-        # USB_SEL low = USB_HOST socket (modem); high would route the PHY to USB_DEV.
-        self.assertIn("set_output(PIN_USB_SEL, 0)", board)
+        # USB_SEL high = USB_HOST socket (modem), low = USB_DEV (user guide, esp-bsp).
+        self.assertIn("set_output(PIN_USB_SEL, 1)", board)
+        # MIC2005A FAULT/ is active low.
+        self.assertIn("gpio_get_level(PIN_USB_OVERCURRENT) == 0", board)
         partitions = (ROOT / "partitions.csv").read_text(encoding="utf-8")
         self.assertIn("coredump,   data, coredump,", partitions)
         defaults = (ROOT / "sdkconfig.defaults").read_text(encoding="utf-8")

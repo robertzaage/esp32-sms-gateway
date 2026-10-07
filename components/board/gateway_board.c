@@ -10,6 +10,8 @@
 static const char *TAG = "board";
 #define USB_OC_POLL_MS 100U
 #define USB_OC_CLEAR_COOLDOWN_MS 5000U
+/* Ignore short faults such as the inrush when the modem is plugged in. */
+#define USB_OC_ASSERT_POLLS 3U
 static SemaphoreHandle_t s_power_mutex;
 static bool s_power_requested = true;
 static bool s_overcurrent_latched;
@@ -17,7 +19,8 @@ static uint32_t s_overcurrent_events;
 static uint32_t s_power_cutoffs;
 
 /* Official ESP32-S3-USB-OTG board signals. */
-/* USB_SEL low routes GPIO19/20 to the USB_HOST Type-A socket, high to USB_DEV. */
+/* USB_SEL high routes GPIO19/20 to the USB_HOST Type-A socket, low to USB_DEV.
+ * OVERCURRENT is the MIC2005A open-drain FAULT/ output: low means over-current. */
 #define PIN_USB_SEL          GPIO_NUM_18
 #define PIN_USB_LIMIT_EN     GPIO_NUM_17
 #define PIN_USB_OVERCURRENT  GPIO_NUM_21
@@ -91,7 +94,7 @@ const char *gateway_board_usb_host_power_source_name(void)
 
 bool gateway_board_usb_overcurrent(void)
 {
-    return gpio_get_level(PIN_USB_OVERCURRENT) != 0;
+    return gpio_get_level(PIN_USB_OVERCURRENT) == 0;
 }
 
 esp_err_t gateway_board_status_led_set(bool on)
@@ -109,8 +112,10 @@ static void power_monitor_task(void *arg)
 {
     (void)arg;
     TickType_t clear_since = 0;
+    uint32_t asserted_polls = 0;
     for (;;) {
-        const bool asserted = gateway_board_usb_overcurrent();
+        asserted_polls = gateway_board_usb_overcurrent() ? asserted_polls + 1 : 0;
+        const bool asserted = asserted_polls >= USB_OC_ASSERT_POLLS;
         if (s_power_mutex != NULL && xSemaphoreTake(s_power_mutex, pdMS_TO_TICKS(250)) == pdTRUE) {
             if (asserted) {
                 clear_since = 0;
@@ -158,14 +163,14 @@ esp_err_t gateway_board_init(void)
     ESP_RETURN_ON_ERROR(set_output(PIN_DEV_VBUS_EN, 0), TAG, "DEV_VBUS_EN init");
     ESP_RETURN_ON_ERROR(set_output(PIN_BOOST_EN, 0), TAG, "BOOST_EN init");
     ESP_RETURN_ON_ERROR(set_output(PIN_USB_LIMIT_EN, 0), TAG, "LIMIT_EN init");
-    ESP_RETURN_ON_ERROR(set_output(PIN_USB_SEL, 0), TAG, "USB_SEL host routing");
+    ESP_RETURN_ON_ERROR(set_output(PIN_USB_SEL, 1), TAG, "USB_SEL host routing");
     ESP_RETURN_ON_ERROR(set_output(PIN_LED_GREEN, 0), TAG, "green LED init");
     ESP_RETURN_ON_ERROR(set_output(PIN_LED_YELLOW, 0), TAG, "yellow LED init");
 
     gpio_config_t input = {
         .pin_bit_mask = 1ULL << PIN_USB_OVERCURRENT,
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
@@ -186,6 +191,6 @@ esp_err_t gateway_board_init(void)
     ESP_RETURN_ON_ERROR(gateway_board_status_led_set(true), TAG, "status LED");
 
     if (xTaskCreate(power_monitor_task, "usb_power_mon", 3072, NULL, 8, NULL) != pdPASS) return ESP_ERR_NO_MEM;
-    ESP_LOGI(TAG, "USB_HOST socket routed to the ESP32-S3 USB host (USB_SEL=0)");
+    ESP_LOGI(TAG, "USB_HOST socket routed to the ESP32-S3 USB host (USB_SEL=1)");
     return ESP_OK;
 }
