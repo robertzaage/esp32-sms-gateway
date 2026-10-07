@@ -11,6 +11,8 @@ With an ESP32-S3-USB-OTG powered through `USB_DEV` and a Huawei E3372 (stick fir
 - SMS send and receive in GSM-7 and Unicode (UCS-2, including emoji), multipart in both directions, and delivery reports for every segment;
 - OTA updates over the REST API; rejection of a wrong checksum, a truncated image, a non-application image and a reinstall without the override header; automatic rollback when a new image crashes before it is confirmed (tested twice), with the crash summary recorded;
 - modem restart through the API, including the VBUS power cycle, USB mode switch and SMS setup afterwards;
+- unplugging and replugging the modem while the gateway runs (USB reconnect, mode switch, SMS setup; no gateway restart, no false over-current);
+- broker restart: MQTT reconnects within ~20 s, and an SMS received while the broker was down reaches Home Assistant afterwards;
 - MQTT over TLS (`mqtts://`, Let's Encrypt certificate) with a topic-restricted broker account;
 - Home Assistant discovery with all sensors, the incoming-SMS event, the notify entity and both restart buttons (the gateway button reports `software restart: MQTT system/reboot command` afterwards).
 
@@ -19,14 +21,12 @@ With an ESP32-S3-USB-OTG powered through `USB_DEV` and a Huawei E3372 (stick fir
 Fault tests on the real board/modem combination:
 
 - power-on (not only a software restart) with the modem attached;
-- unplugging and replugging the modem while the gateway runs;
 - Wi-Fi outage of several minutes (reconnect, setup portal fallback after 3 minutes, reconnect from the portal);
-- broker restart (MQTT reconnect, replay of SMS received during the outage);
 - power loss during a send (the message must end up `uncertain`, not sent twice).
 
 Internal RAM:
 
-- The 1.9 MB `storage` NVS partition costs an estimated ~40 KB of RAM for NVS page bookkeeping, although it holds at most 128 records. Every record is a fixed 4.6 KB blob regardless of text length. Variable-length records plus a smaller partition would free most of that RAM, at the price of a one-time factory flash. Decide before 1.0, because the partition table cannot change through OTA.
+- The 1.9 MB `storage` NVS partition costs an estimated ~40 KB of RAM for NVS page bookkeeping, although it holds at most 128 records. Every record is a fixed 4.6 KB blob regardless of text length. Variable-length records plus a smaller partition would free most of that RAM, at the price of a one-time factory flash (the partition table cannot change through OTA). Decided: do it before 1.0, scheduled after the remaining fault tests.
 
 Feature checks:
 
