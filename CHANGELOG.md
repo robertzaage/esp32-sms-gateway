@@ -8,6 +8,8 @@ The current development line is preparing the first public hardware-tested relea
 
 ### Fixed
 
+- Outgoing SMS could stay `queued` forever: if the SMS setup (`AT+CMGF=0`, `AT+CNMI`) failed once after the modem became ready, it was never retried. It is now retried every 30 s, with fallback `AT+CNMI` modes. `/api/v1/status` shows `sms.pdu_mode_configured` and the failing setup command.
+- `POST /api/v1/messages` rejected the documented `delivery_report` field (it only accepted `request_delivery_report`). Both are accepted now, matching the MQTT command.
 - Wi-Fi start failed with out-of-memory, aborting boot (`app_main` → `network_service_init`). The display's 115 KB full-frame buffer left only ~55–78 KB of internal RAM. The display now draws in 24-line strips (11.5 KB), and about 180 KB is free before Wi-Fi starts.
 - A failing boot step is recorded with its name, error code and free heap, and shown as the crash summary on the next boot.
 - The modem was never powered: the over-current input (GPIO21, MIC2005A `FAULT/`) is active low, but was read as active high, so the gateway cut the `USB_HOST` power at boot and kept it off. Short faults (plug-in inrush) are now ignored.

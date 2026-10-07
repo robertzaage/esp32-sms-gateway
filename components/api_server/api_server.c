@@ -279,6 +279,19 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(s, "store_free", sms.store_free_records);
     cJSON_AddNumberToObject(s, "store_pruned", sms.store_pruned_records);
     cJSON_AddNumberToObject(s, "store_capacity_failures", sms.store_capacity_failures);
+    cJSON_AddBoolToObject(s, "modem_ready", sms.modem_ready);
+    cJSON_AddBoolToObject(s, "pdu_mode_configured", sms.pdu_mode_configured);
+    cJSON_AddNumberToObject(s, "setup_attempts", sms.setup_attempts);
+    if (sms.setup_failed_command != NULL) {
+        cJSON *failed = cJSON_AddObjectToObject(s, "setup_failed");
+        cJSON_AddStringToObject(failed, "command", sms.setup_failed_command);
+        cJSON_AddNumberToObject(failed, "result", sms.setup_failed_result);
+        cJSON_AddNumberToObject(failed, "code", sms.setup_failed_code);
+    } else {
+        cJSON_AddNullToObject(s, "setup_failed");
+    }
+    cJSON_AddNumberToObject(s, "last_cms_error", sms.last_cms_error);
+    cJSON_AddStringToObject(s, "last_error", esp_err_to_name(sms.last_error));
     gateway_idempotency_diagnostics_t idem = {0};
     if (gateway_idempotency_get_diagnostics(&idem) == ESP_OK) {
         cJSON *idem_obj = cJSON_AddObjectToObject(root, "idempotency");
@@ -562,14 +575,16 @@ static esp_err_t messages_post_handler(httpd_req_t *req)
     esp_err_t err = read_body(req, &body);
     if (err != ESP_OK) return problem(req, 400, "urn:sms-gateway:invalid-body", "Bad Request", "Request body is missing or too large");
     cJSON *json = cJSON_Parse(body);
-    static const char *const allowed[] = {"to", "text", "request_delivery_report"};
+    /* delivery_report matches the MQTT command; request_delivery_report is the older name. */
+    static const char *const allowed[] = {"to", "text", "delivery_report", "request_delivery_report"};
     if (json == NULL || !json_has_only_fields(json, allowed, sizeof(allowed) / sizeof(allowed[0]))) {
         cJSON_Delete(json); gateway_security_wipe(body, (size_t)req->content_len + 1); free(body);
         return problem(req, 400, "urn:sms-gateway:invalid-json", "Bad Request", "Invalid JSON body or unknown field");
     }
     const cJSON *to = cJSON_GetObjectItemCaseSensitive(json, "to");
     const cJSON *text = cJSON_GetObjectItemCaseSensitive(json, "text");
-    const cJSON *dr = cJSON_GetObjectItemCaseSensitive(json, "request_delivery_report");
+    const cJSON *dr = cJSON_GetObjectItemCaseSensitive(json, "delivery_report");
+    if (dr == NULL) dr = cJSON_GetObjectItemCaseSensitive(json, "request_delivery_report");
     const bool delivery = dr == NULL ? true : cJSON_IsTrue(dr);
     if (!cJSON_IsString(to) || !cJSON_IsString(text) || !gateway_e164_valid(to->valuestring) ||
         text->valuestring[0] == '\0' || strlen(text->valuestring) >= SMS_MESSAGE_TEXT_MAX ||

@@ -19,6 +19,7 @@
 #define SMS_SERVICE_WAKE_MS 2000
 #define SMS_SERVICE_AT_TIMEOUT_MS 10000
 #define SMS_SERVICE_CMGS_TIMEOUT_MS 60000
+#define SMS_SERVICE_SETUP_RETRY_MS 30000
 #define SMS_SERVICE_URC_MAX AT_ENGINE_MAX_URC_LENGTH
 
 typedef enum {
@@ -633,19 +634,72 @@ static void scan_stored_messages(void)
     ESP_LOGW(TAG, "stored-message scan reached safety batch limit");
 }
 
+static bool setup_command(const char *command)
+{
+    at_response_t response = {0};
+    if (execute_simple(command, NULL, 0, SMS_SERVICE_AT_TIMEOUT_MS, &response)) {
+        return true;
+    }
+    portENTER_CRITICAL(&s_diag_lock);
+    s_service.diagnostics.setup_failed_command = command;
+    s_service.diagnostics.setup_failed_result = (int)response.result;
+    s_service.diagnostics.setup_failed_code = response.error_code;
+    portEXIT_CRITICAL(&s_diag_lock);
+    ESP_LOGW(TAG, "SMS setup: %s failed (result %d, code %d)", command, (int)response.result,
+             response.error_code);
+    return false;
+}
+
 static bool configure_pdu_mode(void)
 {
-    if (!execute_simple("AT+CMGF=0", NULL, 0, SMS_SERVICE_AT_TIMEOUT_MS, NULL)) {
+    /* Firmware variants differ in which new-message indication modes they
+     * accept; every variant here reports new SMS (+CMTI) and stores them. */
+    static const char *const cnmi[] = {
+        "AT+CNMI=2,1,0,1,0",
+        "AT+CNMI=2,1,0,2,0",
+        "AT+CNMI=1,1,0,1,0",
+        "AT+CNMI=2,1,0,0,0",
+        "AT+CNMI=1,1,0,0,0",
+    };
+    portENTER_CRITICAL(&s_diag_lock);
+    ++s_service.diagnostics.setup_attempts;
+    portEXIT_CRITICAL(&s_diag_lock);
+    if (!setup_command("AT+CMGF=0")) {
         return false;
     }
-    if (!execute_simple("AT+CNMI=2,1,0,1,0", NULL, 0, SMS_SERVICE_AT_TIMEOUT_MS, NULL)) {
+    bool indications = false;
+    for (size_t i = 0; i < sizeof(cnmi) / sizeof(cnmi[0]) && !indications; ++i) {
+        indications = setup_command(cnmi[i]);
+        if (indications && i > 0) ESP_LOGI(TAG, "SMS setup: using %s", cnmi[i]);
+    }
+    if (!indications) {
         return false;
     }
     portENTER_CRITICAL(&s_diag_lock);
     s_service.diagnostics.pdu_mode_configured = true;
+    s_service.diagnostics.setup_failed_command = NULL;
     portEXIT_CRITICAL(&s_diag_lock);
     scan_stored_messages();
     return true;
+}
+
+/* A failed setup (or a missed ready event) must not park the queue forever. */
+static void retry_pdu_mode_if_needed(TickType_t *last_attempt)
+{
+    bool configured;
+    portENTER_CRITICAL(&s_diag_lock);
+    configured = s_service.diagnostics.pdu_mode_configured;
+    portEXIT_CRITICAL(&s_diag_lock);
+    if (configured || !modem_ready()) return;
+    const TickType_t now = xTaskGetTickCount();
+    if (*last_attempt != 0 && now - *last_attempt < pdMS_TO_TICKS(SMS_SERVICE_SETUP_RETRY_MS)) return;
+    *last_attempt = now;
+    portENTER_CRITICAL(&s_diag_lock);
+    s_service.diagnostics.modem_ready = true;
+    portEXIT_CRITICAL(&s_diag_lock);
+    if (!configure_pdu_mode()) {
+        ESP_LOGW(TAG, "SMS PDU-mode initialization failed; retrying in %d s", SMS_SERVICE_SETUP_RETRY_MS / 1000);
+    }
 }
 
 static void mark_interrupted_sends_uncertain(void)
@@ -840,6 +894,7 @@ static void service_task(void *arg)
 {
     (void)arg;
     mark_interrupted_sends_uncertain();
+    TickType_t last_setup = 0;
 
     for (;;) {
         service_event_t event;
@@ -850,6 +905,7 @@ static void service_task(void *arg)
                 s_service.diagnostics.modem_ready = true;
                 s_service.diagnostics.pdu_mode_configured = false;
                 portEXIT_CRITICAL(&s_diag_lock);
+                last_setup = xTaskGetTickCount();
                 if (!configure_pdu_mode()) {
                     ESP_LOGW(TAG, "SMS PDU-mode initialization failed");
                 }
@@ -869,6 +925,7 @@ static void service_task(void *arg)
                 break;
             }
         }
+        retry_pdu_mode_if_needed(&last_setup);
         process_one_outbound();
     }
 }

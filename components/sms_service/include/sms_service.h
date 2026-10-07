@@ -60,6 +60,12 @@ typedef struct {
     uint16_t store_free_records;
     int last_cms_error;
     esp_err_t last_error;
+    /* SMS setup (PDU mode, new-message indications): last failing command,
+     * its at_result_t and CME/CMS code, or NULL once setup succeeded. */
+    const char *setup_failed_command;
+    int setup_failed_result;
+    int setup_failed_code;
+    uint32_t setup_attempts;
 } sms_service_diagnostics_t;
 
 esp_err_t sms_service_init(const sms_service_transport_t *transport,
