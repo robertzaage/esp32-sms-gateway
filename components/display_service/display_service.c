@@ -16,6 +16,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "gateway_board.h"
+#include "gateway_diag.h"
 #include "gateway_security.h"
 #include "modem_core.h"
 #include "mqtt_service.h"
@@ -61,6 +62,7 @@ static const char *TAG = "display";
 typedef enum {
     PAGE_STATUS = 0,
     PAGE_SETUP,
+    PAGE_CRASH, /* previous boot crashed; shown until a button is pressed */
 } display_page_t;
 
 /*
@@ -84,6 +86,7 @@ typedef struct {
     char sms_sender[SMS_MAX_ADDRESS_LENGTH];
     char sms_time[16];
     char sms_preview[64];
+    gateway_safe_mode_t safe_mode;
 } view_significant_t;
 
 typedef struct {
@@ -102,6 +105,7 @@ static uint32_t s_sms_id;
 static char s_sms_sender[SMS_MAX_ADDRESS_LENGTH];
 static char s_sms_time[16];
 static char s_sms_preview[64];
+static bool s_crash_dismissed;
 static int s_shift_x;
 static int s_shift_y;
 
@@ -257,9 +261,24 @@ static void draw_setup(const view_significant_t *v)
     }
 }
 
+static void draw_crash(void)
+{
+    text(8, 6, 2, "Last boot crashed", C_RED);
+    /* Wrap the summary at 19 characters per line; photograph this screen. */
+    const char *crash = gateway_diag_last_crash(NULL);
+    char line[20];
+    const size_t len = strlen(crash);
+    for (int row = 0; row < 9 && (size_t)row * 19 < len; ++row) {
+        snprintf(line, sizeof(line), "%.19s", crash + row * 19);
+        text(8, 28 + row * 21, 2, line, C_WHITE);
+    }
+    text(8, 226, 1, "Press any button to continue", C_GREY);
+}
+
 static void draw_status(const view_significant_t *v, const view_minor_t *m)
 {
-    text(8, 6, 2, "SMS Gateway", C_GREEN);
+    text(8, 6, 2, v->safe_mode != GATEWAY_SAFE_MODE_OFF ? "SAFE MODE" : "SMS Gateway",
+         v->safe_mode != GATEWAY_SAFE_MODE_OFF ? C_RED : C_GREEN);
 
     text(8, 34, 2, "WiFi", C_GREY);
     if (v->wifi_connected) text(68, 34, 2, v->ipv4, C_WHITE);
@@ -321,7 +340,8 @@ static void flush(void)
 static void render(const view_significant_t *v, const view_minor_t *m)
 {
     memset(s_frame, 0, LCD_W * LCD_H * sizeof(*s_frame));
-    if (v->page == PAGE_SETUP) draw_setup(v);
+    if (v->page == PAGE_CRASH) draw_crash();
+    else if (v->page == PAGE_SETUP) draw_setup(v);
     else draw_status(v, m);
     flush();
 }
@@ -377,6 +397,9 @@ static void collect(view_significant_t *v, view_minor_t *m)
     portEXIT_CRITICAL(&s_lock);
     /* While setup is in progress, keep the setup page (with its result) visible. */
     if (v->setup_state == NETWORK_SETUP_CONNECTING || v->setup_state == NETWORK_SETUP_CONNECTED) v->page = PAGE_SETUP;
+    v->safe_mode = gateway_diag_safe_mode();
+    bool fresh = false;
+    if (!s_crash_dismissed && gateway_diag_last_crash(&fresh)[0] != '\0' && fresh) v->page = PAGE_CRASH;
 
     mqtt_service_diagnostics_t mqtt = {0};
     if (mqtt_service_get_diagnostics(&mqtt) == ESP_OK && mqtt.enabled) v->mqtt = mqtt.connected ? 2 : 1;
@@ -412,6 +435,8 @@ static void display_task(void *arg)
             if (gateway_board_button_pressed((gateway_board_button_t)b)) {
                 if (press_started_ms[b] == 0) {
                     press_started_ms[b] = now;
+                    /* The first press only lights a dark screen; a press on a lit crash page dismisses it. */
+                    if (on) s_crash_dismissed = true;
                     wake = true;
                 }
                 if (b == GATEWAY_BUTTON_MENU && !long_press_fired && now - press_started_ms[b] >= BUTTON_LONG_PRESS_MS) {

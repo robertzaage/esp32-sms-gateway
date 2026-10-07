@@ -55,6 +55,7 @@ jobs:
           idf.py merge-bin -o "$PWD/dist/esp32-sms-gateway-factory.bin" -f raw
           cp build/bootloader/bootloader.bin dist/
           cp build/partition_table/partition-table.bin dist/
+          cp build/esp32_sms_gateway.elf dist/
           cp build/flash_args dist/
           if [[ -f build/flasher_args.json ]]; then cp build/flasher_args.json dist/; fi
           python scripts/release_manifest.py \

@@ -24,7 +24,8 @@ typedef enum {
     MODEM_STATE_RECOVERY,
 } modem_state_t;
 
-esp_err_t modem_core_init(void);
+/** start_usb_host=false keeps the SMS/AT services up without touching USB (safe mode). */
+esp_err_t modem_core_init(bool start_usb_host);
 modem_state_t modem_core_state(void);
 const char *modem_core_state_name(modem_state_t state);
 esp_err_t modem_core_usb_diagnostics(modem_usb_diagnostics_t *out);

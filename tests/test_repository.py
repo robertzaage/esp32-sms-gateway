@@ -257,6 +257,19 @@ class RepositoryContractTests(unittest.TestCase):
         for route in ('"/api/setup/info"', '"/api/setup/scan"', '"/api/setup/status"', '"/api/setup"'):
             self.assertIn(route, portal)
 
+    def test_usb_routing_and_crash_diagnostics_contract(self):
+        board = (ROOT / "components" / "board" / "gateway_board.c").read_text(encoding="utf-8")
+        # USB_SEL low = USB_HOST socket (modem); high would route the PHY to USB_DEV.
+        self.assertIn("set_output(PIN_USB_SEL, 0)", board)
+        partitions = (ROOT / "partitions.csv").read_text(encoding="utf-8")
+        self.assertIn("coredump,   data, coredump,", partitions)
+        defaults = (ROOT / "sdkconfig.defaults").read_text(encoding="utf-8")
+        self.assertIn("CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y", defaults)
+        self.assertIn("CONFIG_ESP_CONSOLE_SECONDARY_NONE=y", defaults)
+        app = (ROOT / "main" / "app_main.c").read_text(encoding="utf-8")
+        self.assertIn("gateway_diag_init()", app)
+        self.assertNotIn("ESP_ERROR_CHECK(display_service_init())", app)
+
     def test_openapi_exposes_redacted_mqtt_config(self):
         text = (ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8")
         self.assertIn('/api/v1/config/mqtt:', text)

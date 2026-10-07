@@ -17,6 +17,7 @@ static uint32_t s_overcurrent_events;
 static uint32_t s_power_cutoffs;
 
 /* Official ESP32-S3-USB-OTG board signals. */
+/* USB_SEL low routes GPIO19/20 to the USB_HOST Type-A socket, high to USB_DEV. */
 #define PIN_USB_SEL          GPIO_NUM_18
 #define PIN_USB_LIMIT_EN     GPIO_NUM_17
 #define PIN_USB_OVERCURRENT  GPIO_NUM_21
@@ -157,7 +158,7 @@ esp_err_t gateway_board_init(void)
     ESP_RETURN_ON_ERROR(set_output(PIN_DEV_VBUS_EN, 0), TAG, "DEV_VBUS_EN init");
     ESP_RETURN_ON_ERROR(set_output(PIN_BOOST_EN, 0), TAG, "BOOST_EN init");
     ESP_RETURN_ON_ERROR(set_output(PIN_USB_LIMIT_EN, 0), TAG, "LIMIT_EN init");
-    ESP_RETURN_ON_ERROR(set_output(PIN_USB_SEL, 1), TAG, "USB_SEL host routing");
+    ESP_RETURN_ON_ERROR(set_output(PIN_USB_SEL, 0), TAG, "USB_SEL host routing");
     ESP_RETURN_ON_ERROR(set_output(PIN_LED_GREEN, 0), TAG, "green LED init");
     ESP_RETURN_ON_ERROR(set_output(PIN_LED_YELLOW, 0), TAG, "yellow LED init");
 
@@ -185,6 +186,6 @@ esp_err_t gateway_board_init(void)
     ESP_RETURN_ON_ERROR(gateway_board_status_led_set(true), TAG, "status LED");
 
     if (xTaskCreate(power_monitor_task, "usb_power_mon", 3072, NULL, 8, NULL) != pdPASS) return ESP_ERR_NO_MEM;
-    ESP_LOGI(TAG, "USB Type-A data routed to ESP32-S3 native USB host");
+    ESP_LOGI(TAG, "USB_HOST socket routed to the ESP32-S3 USB host (USB_SEL=0)");
     return ESP_OK;
 }

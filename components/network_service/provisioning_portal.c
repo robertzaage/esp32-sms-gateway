@@ -14,6 +14,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "gateway_diag.h"
 #include "gateway_security.h"
 #include "gateway_settings.h"
 #include "lwip/inet.h"
@@ -32,14 +33,14 @@ static volatile bool s_dns_running;
 
 static const char PORTAL_PAGE[] =
 "<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
-"<title>SMS Gateway setup</title><style>"
+"<title>SMS Gateway setup</title><style>#diag{display:none;background:#fde8e8;padding:.7rem;border-radius:.3rem;margin-bottom:1rem;font-size:.9rem}"
 "body{max-width:34rem;margin:1.5rem auto;padding:0 1rem;font:16px system-ui,sans-serif;color:#15202b;background:#fff}"
 "fieldset{border:1px solid #ccd;border-radius:.4rem;margin:0 0 1rem;padding:.6rem 1rem}legend{font-weight:600}"
 "label{display:block;margin:.4rem 0}input[type=text],input[type=password],input[type=number]{box-sizing:border-box;width:100%;padding:.6rem;margin-top:.2rem}"
 ".row{display:flex;gap:.5rem}.row>*{flex:1}small{color:#556}button{padding:.7rem 1rem;background:#0057b8;color:#fff;border:0;border-radius:.3rem;font-size:1rem}"
 "button.s{background:#e8edf5;color:#0057b8;padding:.4rem .7rem;font-size:.9rem}#status{margin-top:1rem;padding:.7rem;border-radius:.3rem;display:none}"
 ".ok{background:#e3f6e8}.err{background:#fde8e8}.busy{background:#eef3fb}code{word-break:break-all;font-size:1rem}"
-"</style><h1>SMS Gateway setup</h1>"
+"</style><h1>SMS Gateway setup</h1><div id=diag></div>"
 "<form id=f><fieldset><legend>Wi-Fi</legend>"
 "<label>Network (SSID)<input type=text id=ssid name=ssid maxlength=32 required list=nets autocomplete=off></label><datalist id=nets></datalist>"
 "<button type=button class=s id=scan>Scan for networks</button>"
@@ -63,7 +64,9 @@ static const char PORTAL_PAGE[] =
 "fetch('/api/setup/info').then(r=>r.json()).then(i=>{if(i.ssid){$('ssid').value=i.ssid;$('wkeep').textContent='Leave the password empty to keep the saved one.'}"
 "let m=i.mqtt||{};$('mhost').value=m.host||'';if(m.port)$('mport').value=m.port;$('mtls').checked=!!m.tls;$('muser').value=m.username||'';"
 "$('ha').checked=m.home_assistant!==false;$('rcpt').value=m.default_recipient||'';if(m.has_password)$('mkeep').textContent='Leave empty to keep the saved password.';"
-"if(i.has_token)$('tkeep').textContent='Leave empty to keep the current token.'}).catch(()=>{});"
+"if(i.has_token)$('tkeep').textContent='Leave empty to keep the current token.';"
+"if(i.last_crash||i.safe_mode){let d=$('diag');d.style.display='block';d.innerHTML=(i.safe_mode?'<b>Safe mode</b> after repeated crashes (modem disabled for this boot).<br>':'')+"
+"(i.last_crash?'Last crash: <code>'+esc(i.last_crash)+'</code><br>':'')+'Reset reason: '+esc(i.reset_reason)}}).catch(()=>{});"
 "$('scan').onclick=async()=>{let b=$('scan');b.disabled=true;b.textContent='Scanning...';"
 "try{let n=await (await fetch('/api/setup/scan')).json();$('nets').innerHTML=n.map(x=>'<option value=\"'+esc(x.ssid)+'\">'+x.rssi+' dBm'+(x.secure?'':' open')+'</option>').join('');"
 "b.textContent=n.length+' networks found';}catch(e){b.textContent='Scan failed'}b.disabled=false};"
@@ -137,6 +140,9 @@ static esp_err_t info_handler(httpd_req_t *req)
     cJSON_AddStringToObject(json, "device_id", network_service_device_id());
     cJSON_AddStringToObject(json, "ssid", net.sta_ssid);
     cJSON_AddBoolToObject(json, "has_token", gateway_security_has_token());
+    cJSON_AddStringToObject(json, "reset_reason", gateway_diag_reset_reason());
+    cJSON_AddStringToObject(json, "last_crash", gateway_diag_last_crash(NULL));
+    cJSON_AddNumberToObject(json, "safe_mode", gateway_diag_safe_mode());
     cJSON *m = cJSON_AddObjectToObject(json, "mqtt");
     if (have_mqtt && m != NULL) {
         char host[PORTAL_HOST_MAX + 1];

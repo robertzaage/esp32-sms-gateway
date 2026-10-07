@@ -64,6 +64,8 @@ jobs:
           cp build/esp32_sms_gateway.bin "dist/$OTA"
           idf.py merge-bin -o "$PWD/dist/$FACTORY" -f raw
           cp build/flash_args "dist/flash_args-${RELEASE_TAG}"
+          # Needed to decode crash backtraces shown on the display / in /api/v1/status.
+          cp build/esp32_sms_gateway.elf "dist/esp32-sms-gateway-${RELEASE_TAG}.elf"
           python scripts/release_manifest.py \
             --dist dist --version "$RELEASE_VERSION" --ota "$OTA" --factory "$FACTORY" \
             --git-sha "$(git rev-parse HEAD)"

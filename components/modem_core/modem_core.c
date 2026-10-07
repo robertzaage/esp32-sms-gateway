@@ -194,7 +194,7 @@ static void usb_transport_event(modem_usb_event_t event,
     }
 }
 
-esp_err_t modem_core_init(void)
+esp_err_t modem_core_init(bool start_usb_host)
 {
     set_state(MODEM_STATE_WAIT_USB, NULL);
 
@@ -238,6 +238,11 @@ esp_err_t modem_core_init(void)
     ESP_ERROR_CHECK_WITHOUT_ABORT(at_engine_set_urc_callback(core_urc_dispatch, NULL));
     ESP_ERROR_CHECK_WITHOUT_ABORT(modem_usb_transport_set_rx_callback(usb_rx_to_at_engine, NULL));
 
+    if (!start_usb_host) {
+        ESP_LOGW(TAG, "USB modem stack not started (safe mode)");
+        set_state(MODEM_STATE_DEGRADED, NULL);
+        return ESP_OK;
+    }
     err = modem_usb_transport_start(usb_transport_event, NULL);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "failed to start USB modem transport: %s", esp_err_to_name(err));

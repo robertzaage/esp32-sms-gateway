@@ -14,6 +14,30 @@ The debug connector alone does not power the Type-A host socket.
 
 The board's host path is current-limited to about 500 mA. Cellular transmit bursts can exceed that. If the modem resets, disappears, or repeatedly re-enumerates while registering on the network, suspect power before USB throughput.
 
+## Serial console
+
+Logs and flashing use the **Micro-USB** port (on-board USB-to-UART bridge, 115200 baud). The `USB_DEV` Type-A plug only supplies power. The ESP32-S3's native USB belongs to the modem port, so no USB serial device appears on `USB_DEV`.
+
+```sh
+python -m serial.tools.miniterm /dev/ttyUSB0 115200   # or: idf.py -p /dev/ttyUSB0 monitor
+```
+
+## Crash diagnostics and safe mode
+
+The firmware keeps a core dump of the last crash in flash. At the next boot, a one-line summary (panic reason, task, PC and backtrace) is:
+
+- shown on the display until a button is pressed;
+- returned as `gateway.last_crash` in `/api/v1/status`;
+- shown at the top of the setup portal page.
+
+Decode the hex addresses with the ELF from the same release:
+
+```sh
+xtensa-esp32s3-elf-addr2line -pfiaC -e esp32-sms-gateway-vX.Y.Z.elf 42011a9f 420091b4
+```
+
+After 3 crash or brownout resets in a row, the gateway boots in **safe mode** without the USB modem stack. After 6, it also skips the display. Wi-Fi, the setup portal and the REST API keep running, so the crash can still be read. The counter clears after 60 seconds of stable operation or a power cycle.
+
 ## Flashing
 
 For a GitHub release, use the merged factory image:

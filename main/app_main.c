@@ -19,6 +19,7 @@
 #include "api_server.h"
 #include "modem_core.h"
 #include "ota_service.h"
+#include "gateway_diag.h"
 
 static const char *TAG = "gateway";
 static TaskHandle_t s_supervisor;
@@ -82,6 +83,8 @@ void app_main(void)
     ESP_LOGI(TAG, "project=%s idf=%s", app->project_name, app->idf_ver);
 
     ESP_ERROR_CHECK(init_nvs());
+    ESP_ERROR_CHECK(gateway_diag_init());
+    const gateway_safe_mode_t safe_mode = gateway_diag_safe_mode();
     ESP_ERROR_CHECK(gateway_board_init());
     ESP_ERROR_CHECK(gateway_ota_service_init());
 
@@ -95,8 +98,14 @@ void app_main(void)
     ESP_ERROR_CHECK(gateway_idempotency_init());
     /* Settings first: the setup portal reads and writes them. */
     ESP_ERROR_CHECK(gateway_settings_init(network_service_device_id()));
-    ESP_ERROR_CHECK(display_service_init());
-    ESP_ERROR_CHECK(modem_core_init());
+    /* Display and modem are not essential for reaching the setup portal and the
+     * API: log failures instead of rebooting into the same failure again. */
+    if (safe_mode < GATEWAY_SAFE_MODE_NO_MODEM_NO_DISPLAY) {
+        const esp_err_t err = display_service_init();
+        if (err != ESP_OK) ESP_LOGE(TAG, "display unavailable: %s", esp_err_to_name(err));
+    }
+    const esp_err_t modem_err = modem_core_init(safe_mode == GATEWAY_SAFE_MODE_OFF);
+    if (modem_err != ESP_OK) ESP_LOGE(TAG, "modem services unavailable: %s", esp_err_to_name(modem_err));
 
     s_api_lock = xSemaphoreCreateMutex();
     if (s_api_lock == NULL ||

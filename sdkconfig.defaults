@@ -14,6 +14,15 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 
+# Console only on UART0 (the Micro-USB USB-to-UART port). The native USB PHY
+# belongs to the USB host stack for the modem.
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Keep a core dump of the last crash in flash; its summary is shown on the
+# display, in /api/v1/status and in the setup portal.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=12
+
 # Keep the watchdog enabled from the beginning of the project.
 CONFIG_ESP_TASK_WDT_EN=y
 CONFIG_ESP_TASK_WDT_INIT=y

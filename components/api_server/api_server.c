@@ -19,6 +19,7 @@
 #include "freertos/task.h"
 #include "gateway_security.h"
 #include "gateway_board.h"
+#include "gateway_diag.h"
 #include "gateway_settings.h"
 #include "mqtt_service.h"
 #include "modem_core.h"
@@ -233,6 +234,13 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON *gateway = cJSON_AddObjectToObject(root, "gateway");
     cJSON_AddStringToObject(gateway, "version", esp_app_get_description()->version);
     cJSON_AddNumberToObject(gateway, "uptime_seconds", esp_timer_get_time() / 1000000);
+    bool crash_fresh = false;
+    const char *last_crash = gateway_diag_last_crash(&crash_fresh);
+    cJSON_AddStringToObject(gateway, "reset_reason", gateway_diag_reset_reason());
+    cJSON_AddNumberToObject(gateway, "consecutive_crashes", gateway_diag_crash_count());
+    cJSON_AddNumberToObject(gateway, "safe_mode", gateway_diag_safe_mode());
+    add_json_string(gateway, "last_crash", last_crash);
+    cJSON_AddBoolToObject(gateway, "last_crash_ended_previous_boot", crash_fresh);
     cJSON_AddStringToObject(gateway, "device_id", network.device_id);
     cJSON_AddStringToObject(gateway, "ipv4", network.ipv4);
     cJSON_AddBoolToObject(gateway, "wifi_connected", network.connected);
