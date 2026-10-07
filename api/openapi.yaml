@@ -458,6 +458,14 @@ components:
               type: boolean
             time_synced:
               type: boolean
+            heap:
+              type: object
+              additionalProperties: false
+              description: Internal RAM in bytes (the board has no PSRAM).
+              properties:
+                free: {type: integer, minimum: 0}
+                largest_block: {type: integer, minimum: 0}
+                minimum_free: {type: integer, minimum: 0, description: Lowest free value since boot.}
         modem:
           type: object
           required: [state, registered]

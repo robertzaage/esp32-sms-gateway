@@ -12,6 +12,7 @@
 #include "esp_ota_ops.h"
 #include "modem_recovery_policy.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -247,6 +248,12 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddStringToObject(gateway, "ipv4", network.ipv4);
     cJSON_AddBoolToObject(gateway, "wifi_connected", network.connected);
     cJSON_AddBoolToObject(gateway, "time_synced", network.time_synced);
+    cJSON *heap = cJSON_AddObjectToObject(gateway, "heap");
+    if (heap != NULL) {
+        cJSON_AddNumberToObject(heap, "free", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        cJSON_AddNumberToObject(heap, "largest_block", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        cJSON_AddNumberToObject(heap, "minimum_free", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+    }
 
     cJSON *m = cJSON_AddObjectToObject(root, "modem");
     cJSON_AddStringToObject(m, "state", modem_core_state_name(modem_core_state()));

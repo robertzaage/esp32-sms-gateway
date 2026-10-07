@@ -8,6 +8,7 @@ The current development line is preparing the first public hardware-tested relea
 
 ### Fixed
 
+- `mqtts://` failed with `ESP_ERR_MBEDTLS_SSL_SETUP_FAILED`: with Wi-Fi, USB host and the modem stack running, only ~29 KB of internal RAM was free (largest block 6 KB, low point 1.3 KB). TLS record buffers are now allocated dynamically, Wi-Fi code runs from flash instead of IRAM, the static Wi-Fi RX buffers went from 10 to 6, and the SMS URC queue from 32 to 8 entries. With an open TLS session ~66 KB is now free (largest block 31 KB).
 - Incoming SMS and delivery reports were not picked up while running: Huawei sends `+CMTI`/`+CDS` to the PC UI port by default, and the gateway listens on the modem port. The gateway now sets `AT^PORTSEL=1` and also polls the modem inbox every 60 s.
 - Outgoing SMS could stay `queued` forever: if the SMS setup (`AT+CMGF=0`, `AT+CNMI`) failed once after the modem became ready, it was never retried. It is now retried every 30 s, with fallback `AT+CNMI` modes. `/api/v1/status` shows `sms.pdu_mode_configured` and the failing setup command.
 - `POST /api/v1/messages` rejected the documented `delivery_report` field (it only accepted `request_delivery_report`). Both are accepted now, matching the MQTT command.
@@ -24,6 +25,7 @@ The current development line is preparing the first public hardware-tested relea
 
 ### Changed
 
+- `/api/v1/status` reports internal RAM as `gateway.heap` (`free`, `largest_block`, `minimum_free`).
 - Every deliberate restart stores its source; `/api/v1/status` reports it as `gateway.restart_cause`.
 - New `POST /api/v1/modem/at` diagnostic endpoint (token required). `/api/v1/status` shows `sms.inbox_scans` and `sms.inbox_scan_failures`.
 - Crash diagnostics: a core dump goes to flash, and a crash summary appears on the display, in `/api/v1/status` and in the portal. Safe mode starts after repeated crash resets. The firmware ELF is now published with CI and release builds.

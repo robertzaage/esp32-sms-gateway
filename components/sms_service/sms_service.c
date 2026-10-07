@@ -13,7 +13,8 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
-#define SMS_SERVICE_QUEUE_DEPTH 32
+/* Each slot holds a full URC line (~0.5 KB); new SMS are also found by the inbox poll. */
+#define SMS_SERVICE_QUEUE_DEPTH 8
 #define SMS_SERVICE_TASK_STACK 12288
 #define SMS_SERVICE_TASK_PRIORITY 9
 #define SMS_SERVICE_WAKE_MS 2000
