@@ -836,7 +836,12 @@ static void process_one_outbound(void)
         return;
     }
 
-    sms_submit_segment_t *segments = calloc(SMS_MAX_SEGMENTS, sizeof(*segments));
+    /* The segment count was fixed when the message was queued; a different
+     * encoding result fails the message below, so size the buffer to it
+     * (384 bytes per segment) instead of the 16-segment maximum. */
+    const size_t capacity = message->segment_count >= 1 && message->segment_count <= SMS_MAX_SEGMENTS
+                                ? message->segment_count : SMS_MAX_SEGMENTS;
+    sms_submit_segment_t *segments = calloc(capacity, sizeof(*segments));
     if (segments == NULL) {
         free(message);
         diag_set_error(ESP_ERR_NO_MEM, -1);
@@ -844,7 +849,7 @@ static void process_one_outbound(void)
     }
     size_t segment_count = 0;
     if (!sms_submit_encode(message->recipient, message->text, message->delivery_report_requested,
-                           message->concat_reference, segments, SMS_MAX_SEGMENTS, &segment_count) ||
+                           message->concat_reference, segments, capacity, &segment_count) ||
         segment_count == 0 || segment_count != message->segment_count) {
         message->status = SMS_MESSAGE_FAILED;
         message->last_modem_error = -1;

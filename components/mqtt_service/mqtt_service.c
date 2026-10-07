@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 #include "api_common.h"
 #include "api_idempotency.h"
@@ -45,16 +46,22 @@ typedef enum {
     MQTT_WORK_REPLAY_ACK,
 } mqtt_work_type_t;
 
+/*
+ * Work items are sized to their payload (see work_new): a fixed 4.6 KB
+ * buffer per item let a burst of SMS status events pin ~40 KB of the
+ * ~65 KB internal RAM that is free while TLS is up.
+ */
 typedef struct {
     mqtt_work_type_t type;
     sms_service_event_t sms_event;
     char topic[MQTT_TOPIC_MAX];
     size_t payload_len;
+    size_t alloc_size;
     bool retained;
     bool duplicate;
     int qos;
     uint32_t message_id;
-    char payload[MQTT_PAYLOAD_MAX + 1];
+    _Alignas(uint32_t) char payload[]; /* payload_len bytes plus a terminating NUL */
 } mqtt_work_t;
 
 typedef struct {
@@ -78,6 +85,24 @@ typedef struct {
 } mqtt_sms_event_snapshot_t;
 
 _Static_assert(sizeof(mqtt_sms_event_snapshot_t) <= MQTT_PAYLOAD_MAX, "MQTT SMS event snapshot exceeds payload buffer");
+
+static mqtt_work_t *work_new(mqtt_work_type_t type, size_t payload_len)
+{
+    const size_t size = sizeof(mqtt_work_t) + payload_len + 1;
+    mqtt_work_t *work = calloc(1, size);
+    if (work != NULL) {
+        work->type = type;
+        work->alloc_size = size;
+    }
+    return work;
+}
+
+static void work_free(mqtt_work_t *work)
+{
+    if (work == NULL) return;
+    gateway_security_wipe(work, work->alloc_size);
+    free(work);
+}
 
 static esp_mqtt_client_handle_t s_client;
 /*
@@ -698,7 +723,7 @@ static void worker_task(void *arg)
             } else {
                 portENTER_CRITICAL(&s_state_lock); ++s_diag.events_dropped; portEXIT_CRITICAL(&s_state_lock);
             }
-            gateway_security_wipe(work, sizeof(*work)); free(work);
+            work_free(work);
         } else if (connected() && xSemaphoreTake(s_runtime_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
             replay_watchdog();
             replay_next_inbound();
@@ -710,10 +735,9 @@ static void worker_task(void *arg)
 
 static void queue_simple_work(mqtt_work_type_t type)
 {
-    mqtt_work_t *work = calloc(1, sizeof(*work));
+    mqtt_work_t *work = work_new(type, 0);
     if (work == NULL) return;
-    work->type = type;
-    if (xQueueSend(s_queue, &work, 0) != pdTRUE) { free(work); portENTER_CRITICAL(&s_state_lock); ++s_diag.events_dropped; portEXIT_CRITICAL(&s_state_lock); }
+    if (xQueueSend(s_queue, &work, 0) != pdTRUE) { work_free(work); portENTER_CRITICAL(&s_state_lock); ++s_diag.events_dropped; portEXIT_CRITICAL(&s_state_lock); }
 }
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
@@ -741,11 +765,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         if (event->msg_id == s_replay_packet_id) replay_id = s_replay_message_id;
         portEXIT_CRITICAL(&s_state_lock);
         if (replay_id != 0 && s_queue != NULL) {
-            mqtt_work_t *work = calloc(1, sizeof(*work));
+            mqtt_work_t *work = work_new(MQTT_WORK_REPLAY_ACK, 0);
             if (work != NULL) {
-                work->type = MQTT_WORK_REPLAY_ACK;
                 work->message_id = replay_id;
-                if (xQueueSend(s_queue, &work, 0) != pdTRUE) { gateway_security_wipe(work, sizeof(*work)); free(work); }
+                if (xQueueSend(s_queue, &work, 0) != pdTRUE) work_free(work);
             }
         }
         return;
@@ -766,13 +789,13 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     memcpy(s_rx.data + s_rx.received, event->data, (size_t)event->data_len);
     s_rx.received += (size_t)event->data_len;
     if (s_rx.received == s_rx.total) {
-        mqtt_work_t *work = calloc(1, sizeof(*work));
+        mqtt_work_t *work = work_new(MQTT_WORK_DATA, s_rx.total);
         if (work != NULL) {
-            work->type = MQTT_WORK_DATA; work->payload_len = s_rx.total;
+            work->payload_len = s_rx.total;
             work->retained = s_rx.retained; work->duplicate = s_rx.duplicate; work->qos = s_rx.qos;
             memcpy(work->topic, s_rx.topic, sizeof(work->topic));
             memcpy(work->payload, s_rx.data, s_rx.total); work->payload[s_rx.total] = 0;
-            if (xQueueSend(s_queue, &work, 0) != pdTRUE) { gateway_security_wipe(work, sizeof(*work)); free(work); }
+            if (xQueueSend(s_queue, &work, 0) != pdTRUE) work_free(work);
         }
         gateway_security_wipe(&s_rx, sizeof(s_rx));
     }
@@ -786,24 +809,27 @@ static void sms_event_callback(sms_service_event_t event, const sms_message_t *m
         queue_simple_work(MQTT_WORK_REPLAY);
         return;
     }
-    mqtt_work_t *work = calloc(1, sizeof(*work));
-    if (work == NULL) return;
-    mqtt_sms_event_snapshot_t snapshot = {0};
-    snapshot.id = message->id;
-    snapshot.direction = message->direction;
-    snapshot.status = message->status;
-    snprintf(snapshot.sender, sizeof(snapshot.sender), "%s", message->sender);
-    snprintf(snapshot.recipient, sizeof(snapshot.recipient), "%s", message->recipient);
-    snprintf(snapshot.service_center_timestamp, sizeof(snapshot.service_center_timestamp), "%s", message->service_center_timestamp);
-    snprintf(snapshot.text, sizeof(snapshot.text), "%s", message->text);
-    work->type = MQTT_WORK_SMS_EVENT;
+    /* Copy only the text actually used, not the whole 4 KB text buffer. */
+    const size_t text_len = strnlen(message->text, sizeof(message->text) - 1);
+    const size_t snapshot_len = offsetof(mqtt_sms_event_snapshot_t, text) + text_len + 1;
+    mqtt_work_t *work = work_new(MQTT_WORK_SMS_EVENT, snapshot_len);
+    if (work == NULL) {
+        portENTER_CRITICAL(&s_state_lock); ++s_diag.events_dropped; portEXIT_CRITICAL(&s_state_lock);
+        return;
+    }
+    mqtt_sms_event_snapshot_t *snapshot = (mqtt_sms_event_snapshot_t *)work->payload;
+    snapshot->id = message->id;
+    snapshot->direction = message->direction;
+    snapshot->status = message->status;
+    snprintf(snapshot->sender, sizeof(snapshot->sender), "%s", message->sender);
+    snprintf(snapshot->recipient, sizeof(snapshot->recipient), "%s", message->recipient);
+    snprintf(snapshot->service_center_timestamp, sizeof(snapshot->service_center_timestamp), "%s", message->service_center_timestamp);
+    memcpy(snapshot->text, message->text, text_len);
+    snapshot->text[text_len] = '\0';
     work->sms_event = event;
-    memcpy(work->payload, &snapshot, sizeof(snapshot));
-    work->payload_len = sizeof(snapshot);
-    gateway_security_wipe(&snapshot, sizeof(snapshot));
+    work->payload_len = snapshot_len;
     if (xQueueSend(s_queue, &work, 0) != pdTRUE) {
-        gateway_security_wipe(work, sizeof(*work));
-        free(work);
+        work_free(work);
         portENTER_CRITICAL(&s_state_lock); ++s_diag.events_dropped; portEXIT_CRITICAL(&s_state_lock);
     }
 }
