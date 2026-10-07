@@ -216,6 +216,61 @@ paths:
       responses:
         "202":
           description: Recovery queued.
+  /api/v1/modem/at:
+    post:
+      operationId: runModemAtCommand
+      summary: Run one AT command on the modem (diagnostics)
+      description: >-
+        Hardware bring-up and troubleshooting aid. The command runs on the same
+        serialized AT channel as the gateway; changing SMS settings such as
+        AT+CMGF or AT+CNMI can break SMS handling until the modem is restarted.
+        Prompt commands (AT+CMGS, AT+CMGW) are refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [command]
+              properties:
+                command:
+                  type: string
+                  pattern: '^[Aa][Tt][^\r\n\x1a]*$'
+                  maxLength: 191
+                timeout_ms:
+                  type: integer
+                  minimum: 100
+                  maximum: 60000
+                  default: 10000
+      responses:
+        "200":
+          description: The modem answered (check `result` for OK/ERROR).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [command, result, error_code, final, truncated, lines]
+                properties:
+                  command: {type: string}
+                  result:
+                    type: string
+                    enum: [ok, error, cme_error, cms_error, timeout, canceled, transport_unavailable, transport_error, rx_overflow, protocol_error, unknown]
+                  error_code:
+                    type: integer
+                    description: CME/CMS error code, -1 when none.
+                  final:
+                    type: string
+                    description: Final result line, e.g. OK or +CMS ERROR 500.
+                  truncated: {type: boolean}
+                  lines:
+                    type: array
+                    items: {type: string}
+        "400":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
   /api/v1/system/reboot:
     post:
       operationId: rebootGateway
@@ -373,6 +428,29 @@ components:
             uptime_seconds:
               type: integer
               minimum: 0
+            reset_reason:
+              type: string
+              description: Why the gateway last started, e.g. power-on, software restart, crash (panic).
+            consecutive_crashes:
+              type: integer
+              minimum: 0
+            safe_mode:
+              type: integer
+              enum: [0, 1, 2]
+              description: 0 off, 1 modem disabled, 2 modem and display disabled.
+            last_crash:
+              type: [string, "null"]
+              description: Last recorded crash or failed boot step summary.
+            last_crash_ended_previous_boot:
+              type: boolean
+            device_id:
+              type: string
+            ipv4:
+              type: [string, "null"]
+            wifi_connected:
+              type: boolean
+            time_synced:
+              type: boolean
         modem:
           type: object
           required: [state, registered]
@@ -424,6 +502,25 @@ components:
             store_free: {type: integer, minimum: 0}
             store_pruned: {type: integer, minimum: 0}
             store_capacity_failures: {type: integer, minimum: 0}
+            modem_ready: {type: boolean}
+            pdu_mode_configured:
+              type: boolean
+              description: SMS setup (PDU mode, new-message indications) done; outbound sends wait for it.
+            setup_attempts: {type: integer, minimum: 0}
+            inbox_scans: {type: integer, minimum: 0}
+            inbox_scan_failures: {type: integer, minimum: 0}
+            setup_failed:
+              type: [object, "null"]
+              description: Last failing SMS setup command, or null once setup succeeded.
+              additionalProperties: false
+              properties:
+                command: {type: string}
+                result: {type: integer, description: at_result_t value}
+                code: {type: integer, description: CME/CMS error code, -1 when none}
+            last_cms_error: {type: integer}
+            last_error:
+              type: string
+              description: esp_err_t name of the last SMS service error.
         idempotency:
           type: object
           additionalProperties: false
@@ -545,9 +642,13 @@ components:
           type: string
           minLength: 1
           maxLength: 4096
-        request_delivery_report:
+        delivery_report:
           type: boolean
           default: true
+        request_delivery_report:
+          type: boolean
+          deprecated: true
+          description: Older name for delivery_report.
     Message:
       type: object
       additionalProperties: false
