@@ -36,6 +36,8 @@ Decode the hex addresses with the ELF from the same release:
 xtensa-esp32s3-elf-addr2line -pfiaC -e esp32-sms-gateway-vX.Y.Z.elf 42011a9f 420091b4
 ```
 
+`gateway.reset_reason` says why the current boot started. For a deliberate software restart, `gateway.restart_cause` names its source: `firmware update installed`, `API /system/reboot`, `MQTT system/reboot command`, `Wi-Fi setup completed` or `USB mode-switch transfer stuck`. `not recorded` means a software restart that did not go through the gateway's restart path.
+
 After 3 crash or brownout resets in a row, the gateway boots in **safe mode** without the USB modem stack. After 6, it also skips the display. Wi-Fi, the setup portal and the REST API keep running, so the crash can still be read. The counter clears after 60 seconds of stable operation or a power cycle.
 
 ## Flashing

@@ -18,6 +18,7 @@
 #include "freertos/task.h"
 #include "usb/cdc_acm_host.h"
 #include "usb/usb_host.h"
+#include "gateway_diag.h"
 
 #define MODEM_USB_MAX_CANDIDATES 4
 #define MODEM_USB_QUEUE_DEPTH 8
@@ -252,7 +253,7 @@ static void process_mode_switch_device(usb_host_client_handle_t client, uint8_t 
     if (!tx.done) {
         ESP_LOGE(TAG, "Huawei mode-switch transfer could not be retired safely; restarting gateway");
         mode_switch_count(false);
-        esp_restart();
+        gateway_diag_restart("USB mode-switch transfer stuck");
         for (;;) vTaskDelay(portMAX_DELAY); /* Defensive: never free an in-flight transfer. */
     }
 

@@ -24,6 +24,7 @@ The current development line is preparing the first public hardware-tested relea
 
 ### Changed
 
+- Every deliberate restart stores its source; `/api/v1/status` reports it as `gateway.restart_cause`.
 - New `POST /api/v1/modem/at` diagnostic endpoint (token required). `/api/v1/status` shows `sms.inbox_scans` and `sms.inbox_scan_failures`.
 - Crash diagnostics: a core dump goes to flash, and a crash summary appears on the display, in `/api/v1/status` and in the portal. Safe mode starts after repeated crash resets. The firmware ELF is now published with CI and release builds.
 - The console is UART0 (Micro-USB) only.

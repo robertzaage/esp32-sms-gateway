@@ -242,6 +242,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(gateway, "safe_mode", gateway_diag_safe_mode());
     add_json_string(gateway, "last_crash", last_crash);
     cJSON_AddBoolToObject(gateway, "last_crash_ended_previous_boot", crash_fresh);
+    add_json_string(gateway, "restart_cause", gateway_diag_restart_cause());
     cJSON_AddStringToObject(gateway, "device_id", network.device_id);
     cJSON_AddStringToObject(gateway, "ipv4", network.ipv4);
     cJSON_AddBoolToObject(gateway, "wifi_connected", network.connected);
@@ -481,7 +482,7 @@ static esp_err_t firmware_post_handler(httpd_req_t *req)
     err = send_json(req, 202, obj);
     cJSON_Delete(obj);
     if (err == ESP_OK) {
-        (void)xTaskCreate(reboot_task, "ota_reboot", 2048, NULL, 3, NULL);
+        (void)xTaskCreate(reboot_task, "ota_reboot", 3072, (void *)"firmware update installed", 3, NULL);
     }
     memset(&result, 0, sizeof(result));
     return err;
@@ -977,9 +978,8 @@ static esp_err_t modem_at_handler(httpd_req_t *req)
 
 static void reboot_task(void *arg)
 {
-    (void)arg;
     vTaskDelay(pdMS_TO_TICKS(250));
-    esp_restart();
+    gateway_diag_restart((const char *)arg);
 }
 
 static esp_err_t reboot_handler(httpd_req_t *req)
@@ -987,7 +987,7 @@ static esp_err_t reboot_handler(httpd_req_t *req)
     if (!authorized(req) || !request_allowed(req, false)) return ESP_OK;
     httpd_resp_set_status(req, "202 Accepted");
     (void)httpd_resp_send(req, NULL, 0);
-    (void)xTaskCreate(reboot_task, "api_reboot", 2048, NULL, 3, NULL);
+    (void)xTaskCreate(reboot_task, "api_reboot", 3072, (void *)"API /system/reboot", 3, NULL);
     return ESP_OK;
 }
 

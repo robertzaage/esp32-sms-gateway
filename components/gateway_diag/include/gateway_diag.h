@@ -46,6 +46,17 @@ void gateway_diag_clear_crash(void);
  */
 void gateway_diag_boot_step_failed(const char *step, esp_err_t err) __attribute__((noreturn));
 
+/**
+ * Deliberate restart: store the reason so the next boot can report why it
+ * started (see gateway_diag_restart_cause), then esp_restart().
+ */
+void gateway_diag_restart(const char *reason) __attribute__((noreturn));
+/**
+ * Reason recorded by gateway_diag_restart() for the restart that started this
+ * boot, "not recorded" for a software restart without one, NULL otherwise.
+ */
+const char *gateway_diag_restart_cause(void);
+
 /** Log free internal heap with a label (boot memory budget). */
 void gateway_diag_log_heap(const char *label);
 

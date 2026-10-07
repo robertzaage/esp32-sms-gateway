@@ -20,6 +20,7 @@
 #include "gateway_security.h"
 #include "nvs.h"
 #include "provisioning_portal.h"
+#include "gateway_diag.h"
 
 /*
  * All Wi-Fi state transitions run on one task (network_task). ESP-IDF event
@@ -395,8 +396,7 @@ static void handle_tick(void)
     gateway_security_wipe(snap.portal_passphrase, sizeof(snap.portal_passphrase));
 
     if (s_restart_at_ms != 0 && now >= s_restart_at_ms) {
-        ESP_LOGI(TAG, "setup complete; restarting");
-        esp_restart();
+        gateway_diag_restart("Wi-Fi setup completed");
     }
     if (snap.setup_state == NETWORK_SETUP_CONNECTING && now >= s_setup_deadline_ms) {
         ESP_LOGW(TAG, "new Wi-Fi credentials timed out");

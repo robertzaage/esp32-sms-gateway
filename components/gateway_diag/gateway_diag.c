@@ -14,6 +14,8 @@
 #define DIAG_NAMESPACE "gw_diag"
 #define DIAG_CRASH_KEY "last_crash"
 #define DIAG_FATAL_KEY "boot_fatal"
+#define DIAG_RESTART_KEY "restart"
+#define DIAG_RESTART_TEXT_MAX 64
 #define DIAG_RTC_MAGIC 0x53474449U /* "SGDI" */
 #define DIAG_STABLE_AFTER_US (60LL * 1000 * 1000)
 #define DIAG_SAFE_MODE_CRASHES 3U
@@ -31,6 +33,7 @@ static uint32_t s_crashes_before_boot;
 static gateway_safe_mode_t s_safe_mode;
 static char s_last_crash[GATEWAY_DIAG_CRASH_TEXT_MAX];
 static bool s_crash_fresh;
+static char s_restart_cause[DIAG_RESTART_TEXT_MAX];
 static esp_timer_handle_t s_stable_timer;
 
 static bool reason_is_abnormal(esp_reset_reason_t reason)
@@ -120,18 +123,38 @@ static bool summarize_core_dump(void)
 #endif
 }
 
-static bool take_boot_fatal(char *out, size_t size)
+/* Reads and erases a one-shot diagnostic string. */
+static bool take_string(const char *key, char *out, size_t size)
 {
     nvs_handle_t nvs = 0;
     if (nvs_open(DIAG_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return false;
     size_t len = size;
-    const bool found = nvs_get_str(nvs, DIAG_FATAL_KEY, out, &len) == ESP_OK;
+    const bool found = nvs_get_str(nvs, key, out, &len) == ESP_OK;
     if (found) {
-        (void)nvs_erase_key(nvs, DIAG_FATAL_KEY);
+        (void)nvs_erase_key(nvs, key);
         (void)nvs_commit(nvs);
     }
     nvs_close(nvs);
     return found;
+}
+
+void gateway_diag_restart(const char *reason)
+{
+    ESP_LOGW(TAG, "restarting: %s", reason);
+    nvs_handle_t nvs = 0;
+    if (nvs_open(DIAG_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+        char text[DIAG_RESTART_TEXT_MAX];
+        snprintf(text, sizeof(text), "%s", reason);
+        (void)nvs_set_str(nvs, DIAG_RESTART_KEY, text);
+        (void)nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    esp_restart();
+}
+
+const char *gateway_diag_restart_cause(void)
+{
+    return s_restart_cause[0] != '\0' ? s_restart_cause : NULL;
 }
 
 void gateway_diag_boot_step_failed(const char *step, esp_err_t err)
@@ -179,7 +202,12 @@ esp_err_t gateway_diag_init(void)
 
     load_crash_text();
     char fatal[GATEWAY_DIAG_CRASH_TEXT_MAX] = {0};
-    if (take_boot_fatal(fatal, sizeof(fatal))) {
+    char cause[DIAG_RESTART_TEXT_MAX] = {0};
+    const bool cause_found = take_string(DIAG_RESTART_KEY, cause, sizeof(cause));
+    if (s_reason == ESP_RST_SW) {
+        snprintf(s_restart_cause, sizeof(s_restart_cause), "%s", cause_found ? cause : "not recorded");
+    }
+    if (take_string(DIAG_FATAL_KEY, fatal, sizeof(fatal))) {
         /* A failed boot step explains the abort better than its backtrace. */
         snprintf(s_last_crash, sizeof(s_last_crash), "%s", fatal);
         s_crash_fresh = true;
@@ -200,8 +228,9 @@ esp_err_t gateway_diag_init(void)
     if (s_crashes_before_boot >= DIAG_SAFE_MODE_DEEP_CRASHES) s_safe_mode = GATEWAY_SAFE_MODE_NO_MODEM_NO_DISPLAY;
     else if (s_crashes_before_boot >= DIAG_SAFE_MODE_CRASHES) s_safe_mode = GATEWAY_SAFE_MODE_NO_MODEM;
 
-    ESP_LOGI(TAG, "reset reason: %s, consecutive abnormal resets: %lu",
-             gateway_diag_reset_reason(), (unsigned long)s_crashes_before_boot);
+    ESP_LOGI(TAG, "reset reason: %s%s%s, consecutive abnormal resets: %lu",
+             gateway_diag_reset_reason(), s_restart_cause[0] ? " - " : "", s_restart_cause,
+             (unsigned long)s_crashes_before_boot);
     if (s_last_crash[0] != '\0') {
         ESP_LOGW(TAG, "%s crash: %s", s_crash_fresh ? "previous boot ended with" : "last recorded", s_last_crash);
     }

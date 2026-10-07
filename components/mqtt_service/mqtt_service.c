@@ -23,6 +23,7 @@
 #include "network_service.h"
 #include "sms_codec.h"
 #include "nvs.h"
+#include "gateway_diag.h"
 
 #define MQTT_WORK_QUEUE_DEPTH 8
 #define MQTT_TOPIC_MAX 192
@@ -435,7 +436,7 @@ static void handle_native_notify(const char *payload, size_t len)
     (void)modem_core_sms_send(config.default_recipient, payload, true, &id);
 }
 
-static void reboot_task(void *arg) { (void)arg; vTaskDelay(pdMS_TO_TICKS(250)); esp_restart(); }
+static void reboot_task(void *arg) { (void)arg; vTaskDelay(pdMS_TO_TICKS(250)); gateway_diag_restart("MQTT system/reboot command"); }
 
 static void subscribe_and_announce(void)
 {

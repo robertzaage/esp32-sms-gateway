@@ -443,6 +443,13 @@ components:
               description: Last recorded crash or failed boot step summary.
             last_crash_ended_previous_boot:
               type: boolean
+            restart_cause:
+              type: [string, "null"]
+              description: >-
+                Source of the deliberate software restart that started this boot
+                (e.g. "firmware update installed", "USB mode-switch transfer stuck"),
+                "not recorded" if none was stored, null when the boot did not
+                start with a software restart.
             device_id:
               type: string
             ipv4:
