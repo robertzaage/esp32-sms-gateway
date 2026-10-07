@@ -11,7 +11,8 @@ With an ESP32-S3-USB-OTG powered through `USB_DEV` and a Huawei E3372 (stick fir
 - SMS send and receive in GSM-7 and Unicode (UCS-2, including emoji), multipart in both directions, and delivery reports for every segment;
 - OTA updates over the REST API; rejection of a wrong checksum, a truncated image, a non-application image and a reinstall without the override header; automatic rollback when a new image crashes before it is confirmed (tested twice), with the crash summary recorded;
 - modem restart through the API, including the VBUS power cycle, USB mode switch and SMS setup afterwards;
-- MQTT over TLS (`mqtts://`, Let's Encrypt certificate) with a topic-restricted broker account.
+- MQTT over TLS (`mqtts://`, Let's Encrypt certificate) with a topic-restricted broker account;
+- Home Assistant discovery with all sensors, the incoming-SMS event, the notify entity and both restart buttons (the gateway button reports `software restart: MQTT system/reboot command` afterwards).
 
 ## Before 1.0
 
@@ -29,7 +30,6 @@ Internal RAM:
 
 Feature checks:
 
-- Home Assistant discovery, the notify entity, the incoming-SMS event and the restart buttons;
 - display colours, the four buttons and the display timeout.
 
 A 7-day unattended run without unexplained restarts (`Last start` sensor) and with a stable memory low point (`Free memory low point` sensor).
