@@ -1,5 +1,6 @@
 #include "api_common.h"
 
+#include <ctype.h>
 #include <string.h>
 
 bool gateway_e164_valid(const char *value)
@@ -77,5 +78,48 @@ bool gateway_rate_limiter_allow(gateway_rate_limiter_t *limiter,
         return false;
     }
     limiter->tokens -= cost;
+    return true;
+}
+
+static bool starts_with_ignore_case(const char *value, const char *prefix)
+{
+    for (; *prefix != '\0'; ++value, ++prefix) {
+        if (toupper((unsigned char)*value) != toupper((unsigned char)*prefix)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool gateway_at_command_allowed(const char *command, size_t max_length)
+{
+    if (command == NULL || !starts_with_ignore_case(command, "AT")) {
+        return false;
+    }
+    const size_t length = strlen(command);
+    if (length >= max_length || strpbrk(command, "\r\n\x1a") != NULL) {
+        return false;
+    }
+    return !starts_with_ignore_case(command, "AT+CMGS") && !starts_with_ignore_case(command, "AT+CMGW");
+}
+
+bool gateway_at_response_prefix(const char *command, char *out, size_t out_size)
+{
+    if (out == NULL || out_size == 0) {
+        return false;
+    }
+    out[0] = '\0';
+    if (command == NULL || !starts_with_ignore_case(command, "AT") || (command[2] != '+' && command[2] != '^')) {
+        return false;
+    }
+    const size_t length = strcspn(command + 2, "=?");
+    if (length < 2 || length + 2 > out_size) {
+        return false;
+    }
+    for (size_t i = 0; i < length; ++i) {
+        out[i] = (char)toupper((unsigned char)command[2 + i]);
+    }
+    out[length] = ':';
+    out[length + 1] = '\0';
     return true;
 }

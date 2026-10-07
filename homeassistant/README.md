@@ -2,7 +2,14 @@
 
 The gateway works with Home Assistant's built-in MQTT integration. No HACS component or custom integration is required.
 
-Enter your broker in the gateway's setup portal (see the main README; hold MENU for five seconds to reopen it) and keep Home Assistant discovery enabled. The gateway publishes one MQTT device with useful diagnostics, network registration, an incoming-SMS event, restart buttons and an optional notify entity.
+Enter your broker in the gateway's setup portal (see the main README; hold MENU for five seconds to reopen it) and keep Home Assistant discovery enabled. The gateway publishes one MQTT device, **SMS Gateway**, with:
+
+- an **Incoming SMS** event entity;
+- an optional **SMS** notify entity (see below);
+- **Restart modem** and **Restart gateway** buttons;
+- diagnostics: modem state, SIM state, operator, signal strength, registered, SMS queue, uptime, free memory, free memory low point, largest free memory block and last start.
+
+The memory and last-start sensors are meant for long-running checks: a falling low point or a `last start` other than `power-on` or `firmware update installed` is worth a look.
 
 ## Receive SMS
 

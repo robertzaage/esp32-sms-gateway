@@ -658,10 +658,12 @@ static bool setup_command(const char *command)
 static bool configure_pdu_mode(void)
 {
     /* Firmware variants differ in which new-message indication modes they
-     * accept; every variant here reports new SMS (+CMTI) and stores them. */
+     * accept; every variant here reports new SMS (+CMTI) and stores them.
+     * Stored delivery reports (ds=2) come first: the inbox poll also finds
+     * them when the indication is missed. The E3372 rejects ds=1. */
     static const char *const cnmi[] = {
-        "AT+CNMI=2,1,0,1,0",
         "AT+CNMI=2,1,0,2,0",
+        "AT+CNMI=2,1,0,1,0",
         "AT+CNMI=1,1,0,1,0",
         "AT+CNMI=2,1,0,0,0",
         "AT+CNMI=1,1,0,0,0",
@@ -683,6 +685,9 @@ static bool configure_pdu_mode(void)
     portENTER_CRITICAL(&s_diag_lock);
     s_service.diagnostics.pdu_mode_configured = true;
     s_service.diagnostics.setup_failed_command = NULL;
+    /* Rejected fallback variants are expected, not errors worth reporting. */
+    s_service.diagnostics.last_error = ESP_OK;
+    s_service.diagnostics.last_cms_error = -1;
     portEXIT_CRITICAL(&s_diag_lock);
     scan_stored_messages();
     return true;

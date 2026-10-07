@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include "api_common.h"
 #include "api_idempotency.h"
 #include "cJSON.h"
@@ -921,15 +920,12 @@ static esp_err_t modem_at_handler(httpd_req_t *req)
     const cJSON *command = valid_object ? cJSON_GetObjectItemCaseSensitive(json, "command") : NULL;
     const cJSON *timeout = valid_object ? cJSON_GetObjectItemCaseSensitive(json, "timeout_ms") : NULL;
     char cmd[AT_ENGINE_MAX_COMMAND_LENGTH] = {0};
-    bool valid = cJSON_IsString(command) && strlen(command->valuestring) < sizeof(cmd) &&
-                 strncasecmp(command->valuestring, "AT", 2) == 0 &&
-                 strpbrk(command->valuestring, "\r\n\x1a") == NULL &&
-                 (timeout == NULL || (cJSON_IsNumber(timeout) && timeout->valuedouble >= 100 && timeout->valuedouble <= 60000));
+    const bool valid = cJSON_IsString(command) && gateway_at_command_allowed(command->valuestring, sizeof(cmd)) &&
+                       (timeout == NULL || (cJSON_IsNumber(timeout) && timeout->valuedouble >= 100 && timeout->valuedouble <= 60000));
     uint32_t timeout_ms = 10000;
     if (valid) {
         snprintf(cmd, sizeof(cmd), "%s", command->valuestring);
         if (timeout != NULL) timeout_ms = (uint32_t)timeout->valuedouble;
-        valid = strncasecmp(cmd, "AT+CMGS", 7) != 0 && strncasecmp(cmd, "AT+CMGW", 7) != 0;
     }
     cJSON_Delete(json); free(body);
     if (!valid) {
@@ -938,15 +934,9 @@ static esp_err_t modem_at_handler(httpd_req_t *req)
     }
 
     /* Treat "+NAME:"/"^NAME:" lines of the command itself as its response. */
-    char prefix[40] = {0};
+    char prefix[40];
     const char *prefixes[1] = {prefix};
-    if (cmd[2] == '+' || cmd[2] == '^') {
-        const size_t len = strcspn(cmd + 2, "=?");
-        if (len > 1 && len < sizeof(prefix) - 1) {
-            memcpy(prefix, cmd + 2, len);
-            prefix[len] = ':';
-        }
-    }
+    (void)gateway_at_response_prefix(cmd, prefix, sizeof(prefix));
     const at_request_t request = {
         .command = cmd,
         .expected_prefixes = prefixes,

@@ -9,6 +9,7 @@
 #include "cJSON.h"
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "mqtt_client.h"
 #include "esp_system.h"
@@ -245,6 +246,14 @@ static void publish_status(void)
     else cJSON_AddNumberToObject(root, "rssi_dbm", modem.signal.rssi_dbm);
     cJSON_AddNumberToObject(root, "sms_queue", current_sms_queue_depth());
     cJSON_AddNumberToObject(root, "uptime_seconds", esp_timer_get_time() / 1000000);
+    cJSON_AddNumberToObject(root, "heap_free", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "heap_minimum_free", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "heap_largest_block", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    /* "software restart: firmware update installed", "power-on", ... */
+    char last_start[128];
+    const char *cause = gateway_diag_restart_cause();
+    snprintf(last_start, sizeof(last_start), "%s%s%s", gateway_diag_reset_reason(), cause ? ": " : "", cause ? cause : "");
+    cJSON_AddStringToObject(root, "last_start", last_start);
     publish_json_object(status_topic, root, 1, 1);
     cJSON_Delete(root);
 }
@@ -300,6 +309,17 @@ static void publish_discovery(void)
     SENSOR("sim_state", "SIM state", "{{ value_json.sim }}");
     SENSOR("operator", "Operator", "{{ value_json.operator | default('unknown', true) }}");
     SENSOR("sms_queue", "SMS queue", "{{ value_json.sms_queue }}");
+    SENSOR("last_start", "Last start", "{{ value_json.last_start }}");
+#define MEASUREMENT(KEY, NAME, TEMPLATE, UNIT, DEVICE_CLASS) do { \
+    SENSOR(KEY, NAME, TEMPLATE); cJSON *m_ = cJSON_GetObjectItem(cmps, KEY); \
+    cJSON_AddStringToObject(m_, "unit_of_measurement", UNIT); cJSON_AddStringToObject(m_, "device_class", DEVICE_CLASS); \
+    cJSON_AddStringToObject(m_, "state_class", "measurement"); \
+} while (0)
+    MEASUREMENT("uptime", "Uptime", "{{ value_json.uptime_seconds }}", "s", "duration");
+    MEASUREMENT("heap_free", "Free memory", "{{ value_json.heap_free }}", "B", "data_size");
+    MEASUREMENT("heap_minimum_free", "Free memory low point", "{{ value_json.heap_minimum_free }}", "B", "data_size");
+    MEASUREMENT("heap_largest_block", "Largest free memory block", "{{ value_json.heap_largest_block }}", "B", "data_size");
+#undef MEASUREMENT
     cJSON *signal = component(cmps, "signal"); snprintf(unique, sizeof(unique), "%s_signal", device_id);
     add_component_common(signal, "sensor", "Signal strength", unique);
     cJSON_AddStringToObject(signal, "state_topic", state_topic);

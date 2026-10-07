@@ -30,6 +30,27 @@ The device ID is stable for the gateway and does not contain the SIM number, pho
 
 SMS bodies and SMS events are never retained by the gateway.
 
+`status` is published on connect, on changes and every 30 seconds:
+
+```json
+{
+  "modem_state": "ready",
+  "sim": "ready",
+  "registered": true,
+  "roaming": false,
+  "operator": "Telekom.de",
+  "rssi_dbm": -79,
+  "sms_queue": 0,
+  "uptime_seconds": 3600,
+  "heap_free": 65840,
+  "heap_minimum_free": 22248,
+  "heap_largest_block": 31744,
+  "last_start": "software restart: firmware update installed"
+}
+```
+
+`heap_*` are internal RAM in bytes. `last_start` is the reset reason, followed by the recorded cause for a deliberate software restart.
+
 ## Send an SMS
 
 Publish JSON to `<base>/sms/send` with QoS 1:
@@ -94,7 +115,7 @@ When Home Assistant discovery is enabled, the gateway publishes a retained devic
 <discovery_prefix>/device/<device_id>/config
 ```
 
-It creates gateway/modem diagnostics, registration state, an incoming-SMS event, restart buttons and—when a default recipient is configured—an MQTT notify entity.
+It creates gateway/modem diagnostics (modem and SIM state, operator, signal, SMS queue, uptime, free memory, its low point and largest block, last start), registration state, an incoming-SMS event, restart buttons and—when a default recipient is configured—an MQTT notify entity.
 
 The notify entity is a convenience path and uses QoS 0 because Home Assistant's generic notify payload does not provide an application idempotency key. For alarms or arbitrary recipients, use the structured `sms/send` topic with a unique `request_id`.
 

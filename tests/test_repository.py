@@ -418,3 +418,84 @@ class RepositoryContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _function_body(source: str, signature: str) -> str:
+    start = source.index(signature)
+    depth = 0
+    for index in range(source.index("{", start), len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError(f"unterminated function {signature}")
+
+
+def _schema_block(spec: str, name: str) -> str:
+    lines = spec.splitlines()
+    start = lines.index(f"    {name}:")
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.startswith("    ") and not line.startswith("     ") and line.strip().endswith(":"):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
+class OpenApiMatchesCodeTests(unittest.TestCase):
+    """Keeps api/openapi.yaml in step with the REST handlers (stdlib only)."""
+
+    def setUp(self):
+        self.api = (ROOT / "components" / "api_server" / "api_server.c").read_text(encoding="utf-8")
+        self.spec = (ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8")
+
+    def _spec_paths(self):
+        paths = {}
+        current = None
+        for line in self.spec.splitlines():
+            if line.startswith("  /api/") and line.endswith(":"):
+                current = line.strip()[:-1]
+                paths[current] = set()
+            elif current and line.startswith("    ") and not line.startswith("     ") and line.strip()[:-1] in {"get", "post", "patch", "delete", "put"}:
+                paths[current].add(line.strip()[:-1])
+            elif line and not line.startswith(" "):
+                current = None
+        return paths
+
+    def test_every_registered_route_is_documented(self):
+        import re
+        paths = self._spec_paths()
+        routes = re.findall(r'register_uri\("([^"]+)", HTTP_([A-Z]+)', self.api)
+        self.assertGreater(len(routes), 10)
+        for uri, method in routes:
+            method = method.lower()
+            if uri.endswith("/*"):
+                base = uri[:-1]
+                candidates = [p for p in paths if p.startswith(base + "{")]
+            else:
+                candidates = [uri] if uri in paths else []
+            self.assertTrue(candidates, f"{uri} is not in api/openapi.yaml")
+            self.assertTrue(any(method in paths[p] for p in candidates),
+                            f"{method.upper()} {uri} is not in api/openapi.yaml")
+
+    def test_status_fields_are_documented(self):
+        import re
+        body = _function_body(self.api, "static esp_err_t status_handler(")
+        schema = _schema_block(self.spec, "GatewayStatus")
+        keys = set(re.findall(r'cJSON_Add\w*ToObject\(\s*\w+,\s*"([a-z0-9_]+)"', body))
+        keys |= set(re.findall(r'add_json_string\(\s*\w+,\s*"([a-z0-9_]+)"', body))
+        self.assertGreater(len(keys), 40)
+        missing = sorted(k for k in keys if not re.search(rf"^\s+{k}:", schema, re.M))
+        self.assertEqual(missing, [], "status fields missing from GatewayStatus in api/openapi.yaml")
+
+    def test_mqtt_config_fields_are_documented(self):
+        import re
+        body = _function_body(self.api, "static cJSON *mqtt_config_json(")
+        schema = _schema_block(self.spec, "MqttConfig")
+        keys = set(re.findall(r'cJSON_Add\w*ToObject\(\s*\w+,\s*"([a-z0-9_]+)"', body))
+        keys |= set(re.findall(r'add_json_string\(\s*\w+,\s*"([a-z0-9_]+)"', body))
+        missing = sorted(k for k in keys if not re.search(rf"^\s+{k}:", schema, re.M))
+        self.assertEqual(missing, [], "MQTT config fields missing from MqttConfig in api/openapi.yaml")
