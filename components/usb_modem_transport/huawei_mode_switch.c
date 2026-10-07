@@ -4,7 +4,14 @@
 
 bool huawei_mode_switch_pid_supported(uint16_t pid, uint16_t extra_pid)
 {
-    return pid == 0x1446U || pid == 0x14FEU || (extra_pid != 0U && pid == extra_pid);
+    /* 0x1F01: E3372 (and E8372/E3531) cold-boot CD-ROM personality. */
+    return pid == 0x1446U || pid == 0x14FEU || pid == 0x1F01U || (extra_pid != 0U && pid == extra_pid);
+}
+
+bool huawei_modem_pid_supported(uint16_t pid, uint16_t configured_pid)
+{
+    /* 0x1506: "stick" firmware modem mode; 0x1442: debug/AT mode of many E3372 builds. */
+    return pid == configured_pid || pid == 0x1506U || pid == 0x1442U;
 }
 
 bool huawei_mode_switch_message(uint8_t *out, size_t capacity)

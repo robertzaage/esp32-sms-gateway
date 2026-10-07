@@ -39,7 +39,7 @@ Use the board's programming/serial port, not a `/dev/ttyUSB*` node created by a 
 
 The firmware routes the ESP32-S3 USB peripheral to the host connector, enables the configured VBUS path, starts the USB Host stack and waits for the modem.
 
-Huawei modems can appear first as a storage device. The gateway recognizes common pre-switch IDs such as `12d1:1446` and `12d1:14fe`, sends the Huawei mode-switch command, and waits for the modem personality to re-enumerate. An additional source PID can be configured for hardware that uses a different cold-boot ID.
+Huawei modems can appear first as a storage device. The gateway recognizes common pre-switch IDs such as `12d1:1f01` (E3372), `12d1:1446` and `12d1:14fe`, sends the Huawei mode-switch command, and waits for the modem personality to re-enumerate. An additional source PID can be configured for hardware that uses a different cold-boot ID.
 
 For the known `12d1:1506` descriptor, interface 1 is normally the best AT candidate. Firmware does not depend on that number: it ranks compatible interfaces from the live USB descriptor and keeps the first one that answers `AT` with `OK`.
 

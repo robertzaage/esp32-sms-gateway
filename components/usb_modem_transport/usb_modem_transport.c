@@ -307,7 +307,7 @@ static void new_usb_device_callback(usb_device_handle_t usb_dev)
     }
 
     if (device_desc->idVendor != CONFIG_GATEWAY_MODEM_USB_VID ||
-        device_desc->idProduct != CONFIG_GATEWAY_MODEM_USB_PID) {
+        !huawei_modem_pid_supported(device_desc->idProduct, CONFIG_GATEWAY_MODEM_USB_PID)) {
         ESP_LOGD(TAG, "ignoring USB device %04x:%04x",
                  (unsigned)device_desc->idVendor, (unsigned)device_desc->idProduct);
         return;

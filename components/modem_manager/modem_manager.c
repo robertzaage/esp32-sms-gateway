@@ -373,6 +373,9 @@ static bool initialize_session(void)
     if (!execute_command("AT+CMEE=2", NULL, 0, 3000, NULL)) {
         return false;
     }
+    /* Huawei: stop periodic ^RSSI/^HCSQ/^MODE/^BOOT reports; we poll AT+CSQ instead.
+     * Not supported by every firmware, so a failure is harmless. */
+    (void)execute_optional("AT^CURC=0", NULL, 0, 3000, NULL);
 
     query_identity("AT+CGMI", s_manager.snapshot.manufacturer, sizeof(s_manager.snapshot.manufacturer));
     query_identity("AT+CGMM", s_manager.snapshot.model, sizeof(s_manager.snapshot.model));

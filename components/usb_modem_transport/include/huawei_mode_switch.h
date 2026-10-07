@@ -12,6 +12,8 @@ extern "C" {
 #define HUAWEI_MODE_SWITCH_MESSAGE_LEN 31U
 
 bool huawei_mode_switch_pid_supported(uint16_t pid, uint16_t extra_pid);
+/** True for Huawei serial-modem personalities that expose an AT interface. */
+bool huawei_modem_pid_supported(uint16_t pid, uint16_t configured_pid);
 bool huawei_mode_switch_message(uint8_t *out, size_t capacity);
 
 #ifdef __cplusplus

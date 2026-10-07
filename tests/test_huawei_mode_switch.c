@@ -6,7 +6,12 @@ int main(void)
 {
     assert(huawei_mode_switch_pid_supported(0x1446, 0));
     assert(huawei_mode_switch_pid_supported(0x14fe, 0));
-    assert(huawei_mode_switch_pid_supported(0x1f01, 0x1f01));
+    assert(huawei_mode_switch_pid_supported(0x1f01, 0));
+    assert(huawei_mode_switch_pid_supported(0x1234, 0x1234));
+    assert(!huawei_mode_switch_pid_supported(0x14dc, 0));
+    assert(huawei_modem_pid_supported(0x1506, 0x1506));
+    assert(huawei_modem_pid_supported(0x1442, 0x1506));
+    assert(!huawei_modem_pid_supported(0x14dc, 0x1506));
     assert(!huawei_mode_switch_pid_supported(0x1506, 0));
     uint8_t msg[HUAWEI_MODE_SWITCH_MESSAGE_LEN];
     assert(huawei_mode_switch_message(msg, sizeof(msg)));

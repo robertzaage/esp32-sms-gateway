@@ -16,8 +16,9 @@ config GATEWAY_MODEM_USB_SWITCH_PID_EXTRA
     hex "Additional Huawei pre-switch product ID (0 disables)"
     default 0x0000
     help
-        In addition to the built-in Huawei 0x1446 and 0x14FE storage-mode
-        personalities, optionally recognize one site-specific cold-boot PID.
+        In addition to the built-in Huawei 0x1446, 0x14FE and 0x1F01 (E3372)
+        storage-mode personalities, optionally recognize one site-specific
+        cold-boot PID.
 
 config GATEWAY_MODEM_USB_PROBE_RETRIES
     int "AT probe retries per candidate interface"
